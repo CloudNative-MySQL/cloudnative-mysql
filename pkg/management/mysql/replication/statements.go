@@ -138,6 +138,23 @@ func ShowReplicaStatusStatement(v version.Version) string {
 	return "SHOW SLAVE STATUS"
 }
 
+// ResetBinaryLogsStatement clears the binary logs and GTID execution history,
+// using the version-appropriate syntax. It is run on a freshly provisioned
+// replica before setting gtid_purged.
+func ResetBinaryLogsStatement(v version.Version) string {
+	if v.UsesResetBinaryLogsAndGtids() {
+		return "RESET BINARY LOGS AND GTIDS"
+	}
+	return "RESET MASTER"
+}
+
+// SetGTIDPurgedStatement sets the global gtid_purged variable to the given GTID
+// set, telling the server which transactions are already present (e.g. from a
+// physical backup) so GTID auto-positioning starts from the right point.
+func SetGTIDPurgedStatement(gtidSet string) string {
+	return "SET GLOBAL gtid_purged = " + quote(gtidSet)
+}
+
 // SetReadOnlyStatement toggles the global read_only variable.
 func SetReadOnlyStatement(on bool) string {
 	return "SET GLOBAL read_only = " + onOff(on)

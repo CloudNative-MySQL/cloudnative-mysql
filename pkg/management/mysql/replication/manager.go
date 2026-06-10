@@ -56,6 +56,23 @@ func (m *Manager) ConfigureSource(ctx context.Context, opts SourceOptions) error
 	return m.exec(ctx, StartReplicaStatement(m.version))
 }
 
+// ProvisionFromBackup configures a freshly restored replica: it resets the
+// binary logs and GTID history, sets gtid_purged to the backup's GTID set so
+// auto-positioning resumes from the backup point, then points the replica at
+// the source and starts replication. gtidPurged may be empty for a non-GTID
+// backup.
+func (m *Manager) ProvisionFromBackup(ctx context.Context, gtidPurged string, opts SourceOptions) error {
+	if err := m.exec(ctx, ResetBinaryLogsStatement(m.version)); err != nil {
+		return err
+	}
+	if gtidPurged != "" {
+		if err := m.exec(ctx, SetGTIDPurgedStatement(gtidPurged)); err != nil {
+			return err
+		}
+	}
+	return m.ConfigureSource(ctx, opts)
+}
+
 // StartReplica starts the replication threads.
 func (m *Manager) StartReplica(ctx context.Context) error {
 	return m.exec(ctx, StartReplicaStatement(m.version))

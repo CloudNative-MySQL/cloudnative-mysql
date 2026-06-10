@@ -53,6 +53,43 @@ func TestConfigureSourceOrdering(t *testing.T) {
 	}
 }
 
+func TestProvisionFromBackupOrdering(t *testing.T) {
+	m, mock := newManager(t, "8.0.36")
+
+	mock.ExpectExec("RESET BINARY LOGS AND GTIDS").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta("SET GLOBAL gtid_purged = 'uuid:1-10'")).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("STOP REPLICA").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CHANGE REPLICATION SOURCE TO").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("START REPLICA").WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err := m.ProvisionFromBackup(context.Background(), "uuid:1-10", SourceOptions{
+		Host: "primary", User: "repl", AutoPosition: true,
+	})
+	if err != nil {
+		t.Fatalf("ProvisionFromBackup: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestProvisionFromBackupSkipsEmptyGTID(t *testing.T) {
+	m, mock := newManager(t, "8.0.36")
+
+	mock.ExpectExec("RESET BINARY LOGS AND GTIDS").WillReturnResult(sqlmock.NewResult(0, 0))
+	// No SET GLOBAL gtid_purged expected when the set is empty.
+	mock.ExpectExec("STOP REPLICA").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CHANGE REPLICATION SOURCE TO").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("START REPLICA").WillReturnResult(sqlmock.NewResult(0, 0))
+
+	if err := m.ProvisionFromBackup(context.Background(), "", SourceOptions{Host: "p", User: "r"}); err != nil {
+		t.Fatalf("ProvisionFromBackup: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Error(err)
+	}
+}
+
 func TestPromoteOrdering(t *testing.T) {
 	m, mock := newManager(t, "8.0.36")
 

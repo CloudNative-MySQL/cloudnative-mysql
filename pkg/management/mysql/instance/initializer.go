@@ -47,7 +47,7 @@ type InitOptions struct {
 
 func (o *InitOptions) applyDefaults() {
 	if o.MysqldPath == "" {
-		o.MysqldPath = "mysqld"
+		o.MysqldPath = defaultMysqldBinary
 	}
 	if o.ReadyTimeout == 0 {
 		o.ReadyTimeout = 60 * time.Second
@@ -126,7 +126,7 @@ func (o *InitOptions) runBootstrap(ctx context.Context) error {
 	}
 	defer func() { _ = sup.Shutdown(ctx) }()
 
-	db, err := waitForSocket(ctx, o.Socket, o.ReadyTimeout)
+	db, err := waitForSocket(ctx, o.Socket, "root", "", o.ReadyTimeout)
 	if err != nil {
 		return err
 	}
@@ -144,10 +144,10 @@ func (o *InitOptions) runBootstrap(ctx context.Context) error {
 	return nil
 }
 
-// waitForSocket opens a passwordless root connection over the socket, retrying
-// until the server is ready or the timeout elapses.
-func waitForSocket(ctx context.Context, socket string, timeout time.Duration) (*sql.DB, error) {
-	cfg := pool.Config{Socket: socket, User: "root"}
+// waitForSocket opens a connection over the socket for the given credentials,
+// retrying until the server is ready or the timeout elapses.
+func waitForSocket(ctx context.Context, socket, user, password string, timeout time.Duration) (*sql.DB, error) {
+	cfg := pool.Config{Socket: socket, User: user, Password: password}
 	deadline := time.Now().Add(timeout)
 	for {
 		db, err := pool.Open(ctx, cfg)

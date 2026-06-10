@@ -31,6 +31,9 @@ import (
 // DefaultShutdownTimeout bounds a graceful mysqld shutdown before it is killed.
 const DefaultShutdownTimeout = 30 * time.Second
 
+// defaultMysqldBinary is the mysqld binary name assumed when none is configured.
+const defaultMysqldBinary = "mysqld"
+
 // ProcessSupervisor runs and supervises a single child process (mysqld),
 // forwarding its output and managing graceful shutdown and restart. It is the
 // PID1 the instance pod runs.

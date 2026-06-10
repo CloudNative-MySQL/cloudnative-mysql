@@ -146,6 +146,26 @@ func TestStartStopResetShowVersionAware(t *testing.T) {
 	}
 }
 
+func TestResetBinaryLogsStatement(t *testing.T) {
+	const legacy = "RESET MASTER"
+	if got := ResetBinaryLogsStatement(mustParse(t, "8.0.22")); got != "RESET BINARY LOGS AND GTIDS" {
+		t.Errorf("modern reset = %q", got)
+	}
+	if got := ResetBinaryLogsStatement(mustParse(t, "8.0.21")); got != legacy {
+		t.Errorf("legacy reset = %q", got)
+	}
+	if got := ResetBinaryLogsStatement(mustParse(t, "5.7.44")); got != legacy {
+		t.Errorf("5.7 reset = %q", got)
+	}
+}
+
+func TestSetGTIDPurgedStatement(t *testing.T) {
+	got := SetGTIDPurgedStatement("uuid:1-5,uuid2:1-3")
+	if got != "SET GLOBAL gtid_purged = 'uuid:1-5,uuid2:1-3'" {
+		t.Errorf("gtid_purged = %q", got)
+	}
+}
+
 func TestReadOnlyStatements(t *testing.T) {
 	if got := SetReadOnlyStatement(true); got != "SET GLOBAL read_only = ON" {
 		t.Errorf("read_only on = %q", got)

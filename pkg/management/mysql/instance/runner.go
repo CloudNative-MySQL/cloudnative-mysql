@@ -60,7 +60,7 @@ type RunOptions struct {
 
 func (o *RunOptions) applyDefaults() {
 	if o.MysqldPath == "" {
-		o.MysqldPath = "mysqld"
+		o.MysqldPath = defaultMysqldBinary
 	}
 	if o.ShutdownTimeout == 0 {
 		o.ShutdownTimeout = DefaultShutdownTimeout

@@ -110,6 +110,13 @@ func (v Version) HasAdminInterface() bool {
 	return v.AtLeast(8, 0, 14)
 }
 
+// UsesResetBinaryLogsAndGtids reports whether the server uses
+// "RESET BINARY LOGS AND GTIDS" (MySQL 8.0.22+) instead of the deprecated
+// "RESET MASTER".
+func (v Version) UsesResetBinaryLogsAndGtids() bool {
+	return v.AtLeast(8, 0, 22)
+}
+
 // usesSourceSemiSyncNaming reports whether the server uses the source/replica
 // semi-sync plugin and variable naming (MySQL 8.0.26+) instead of master/slave.
 func (v Version) usesSourceSemiSyncNaming() bool {
