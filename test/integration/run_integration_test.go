@@ -31,44 +31,43 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// runScript initialises an instance then runs it under the manager, which
-// supervises mysqld and serves the control API. The control connection reaches
-// mysqld over the administrative interface as the control user.
-const runScript = `set -e
+// TestRunServesControlAPI verifies that `instance run` starts mysqld and serves
+// the control API across every supported MySQL flavor. The control connection
+// reaches mysqld over the admin interface where available (8.0.14+) and over
+// the socket otherwise.
+func TestRunServesControlAPI(t *testing.T) {
+	for _, f := range flavors {
+		t.Run(f.name, func(t *testing.T) {
+			t.Parallel()
+			runRunTest(t, f)
+		})
+	}
+}
+
+func runRunTest(t *testing.T, f flavor) {
+	ctx := context.Background()
+
+	script := fmt.Sprintf(`set -e
 export MYSQL_ROOT_PASSWORD=rootpass MYSQL_CONTROL_PASSWORD=ctlpass MYSQL_APP_PASSWORD=apppass
-cat > /tmp/my.cnf <<CFG
-[mysqld]
-server-id=1
-gtid_mode=ON
-enforce_gtid_consistency=ON
-log_bin=binlog
-log_replica_updates=ON
-admin_address=127.0.0.1
-admin_port=33062
-CFG
+cat > /tmp/my.cnf <<'CFG'
+%sCFG
 manager instance initdb --mysqld=/usr/sbin/mysqld --config=/tmp/my.cnf \
   --data-dir=/var/lib/mysql --socket=/tmp/mysql.sock \
-  --database=app --owner=appuser --control-user=control --server-version=8.0.36
+  --database=app --owner=appuser --control-user=control --server-version=%s
 exec manager instance run --mysqld=/usr/sbin/mysqld --config=/tmp/my.cnf \
-  --data-dir=/var/lib/mysql --socket=/tmp/mysql.sock --server-version=8.0.36 \
+  --data-dir=/var/lib/mysql --socket=/tmp/mysql.sock --server-version=%s \
   --instance-name=test-0 --control-user=control --web-addr=:8080
-`
-
-// TestRunServesControlAPI verifies that `instance run` starts mysqld and serves
-// the control API: /healthz and /readyz report OK and /status reports a ready
-// primary, with the control connection going over the admin interface.
-func TestRunServesControlAPI(t *testing.T) {
-	ctx := context.Background()
+`, f.myCnf(t, 1), f.version, f.version)
 
 	req := testcontainers.ContainerRequest{
 		FromDockerfile: testcontainers.FromDockerfile{
-			Context:    buildInstanceContext(t),
+			Context:    buildInstanceContext(t, f),
 			Dockerfile: "Dockerfile",
 			KeepImage:  true,
 		},
 		ExposedPorts: []string{"8080/tcp"},
 		Entrypoint:   []string{"bash", "-lc"},
-		Cmd:          []string{runScript},
+		Cmd:          []string{script},
 		WaitingFor: wait.ForHTTP("/readyz").WithPort("8080/tcp").
 			WithStatusCodeMatcher(func(status int) bool { return status == http.StatusOK }).
 			WithStartupTimeout(5 * time.Minute),
@@ -93,12 +92,10 @@ func TestRunServesControlAPI(t *testing.T) {
 	}
 	baseURL := fmt.Sprintf("http://%s:%d", host, mapped.Num())
 
-	// /healthz must be OK.
 	if code := getStatus(t, baseURL+"/healthz"); code != http.StatusOK {
 		t.Errorf("/healthz = %d, want 200", code)
 	}
 
-	// /status must report a ready primary.
 	resp, err := http.Get(baseURL + "/status") //nolint:noctx // simple test request
 	if err != nil {
 		t.Fatalf("GET /status: %v", err)

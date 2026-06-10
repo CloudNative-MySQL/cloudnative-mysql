@@ -19,6 +19,8 @@ package instance
 import (
 	"fmt"
 	"strings"
+
+	"github.com/yyewolf/cnmysql/pkg/management/mysql/version"
 )
 
 // BootstrapParams describes the desired state of a freshly initialised server.
@@ -48,6 +50,10 @@ type BootstrapParams struct {
 	// SupportsDynamicPrivileges enables the MySQL 8.0+ dynamic privilege grants
 	// the control user needs (admin-interface access, super_read_only, etc.).
 	SupportsDynamicPrivileges bool
+	// MySQLVersion selects the SQL dialect (e.g. MySQL 5.6 lacks
+	// CREATE USER ... IF NOT EXISTS and sets the root password differently).
+	// Defaults to modern syntax when empty.
+	MySQLVersion string
 	// PostInitSQL is run verbatim, in order, after the managed statements.
 	PostInitSQL []string
 }
@@ -90,11 +96,16 @@ func BootstrapStatements(p BootstrapParams) ([]string, error) {
 		return nil, err
 	}
 
+	d := newBootstrapDialect(p.MySQLVersion)
 	var stmts []string
 
 	// Secure the root account.
-	stmts = append(stmts, fmt.Sprintf(
-		"ALTER USER 'root'@'localhost' IDENTIFIED BY %s", quoteString(p.RootPassword)))
+	stmts = append(stmts, d.setRootPassword(p.RootPassword))
+
+	// Remove the anonymous accounts created by mysql_install_db on MySQL 5.6;
+	// left in place, ''@'localhost' shadows real users on local connections.
+	// A no-op on servers initialised without anonymous users.
+	stmts = append(stmts, "DELETE FROM mysql.user WHERE User = ''")
 
 	// Application database and owner.
 	if p.Database != "" {
@@ -107,8 +118,7 @@ func BootstrapStatements(p BootstrapParams) ([]string, error) {
 		}
 		stmts = append(stmts,
 			create,
-			fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY %s",
-				escapeName(p.AppUser), quoteString(p.AppPassword)),
+			d.createUser(p.AppUser, "IDENTIFIED BY "+quoteString(p.AppPassword)),
 			fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO '%s'@'%%'",
 				quoteIdent(p.Database), escapeName(p.AppUser)),
 		)
@@ -116,16 +126,12 @@ func BootstrapStatements(p BootstrapParams) ([]string, error) {
 
 	// Replication account.
 	if p.ReplicationUser != "" {
-		var create string
+		idClause := "IDENTIFIED BY " + quoteString(p.ReplicationPassword)
 		if p.ReplicationRequireX509 {
-			create = fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%%' REQUIRE X509",
-				escapeName(p.ReplicationUser))
-		} else {
-			create = fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY %s",
-				escapeName(p.ReplicationUser), quoteString(p.ReplicationPassword))
+			idClause = "REQUIRE X509"
 		}
 		stmts = append(stmts,
-			create,
+			d.createUser(p.ReplicationUser, idClause),
 			fmt.Sprintf("GRANT REPLICATION SLAVE ON *.* TO '%s'@'%%'",
 				escapeName(p.ReplicationUser)),
 		)
@@ -134,8 +140,7 @@ func BootstrapStatements(p BootstrapParams) ([]string, error) {
 	// Control account used by the instance manager.
 	if p.ControlUser != "" {
 		stmts = append(stmts,
-			fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY %s",
-				escapeName(p.ControlUser), quoteString(p.ControlPassword)),
+			d.createUser(p.ControlUser, "IDENTIFIED BY "+quoteString(p.ControlPassword)),
 			fmt.Sprintf("GRANT ALL PRIVILEGES ON *.* TO '%s'@'%%' WITH GRANT OPTION",
 				escapeName(p.ControlUser)),
 		)
@@ -149,6 +154,42 @@ func BootstrapStatements(p BootstrapParams) ([]string, error) {
 	stmts = append(stmts, p.PostInitSQL...)
 
 	return stmts, nil
+}
+
+// bootstrapDialect captures the version-specific SQL differences. MySQL 5.6
+// predates CREATE USER ... IF NOT EXISTS and ALTER USER ... IDENTIFIED BY (both
+// 5.7.6+), so it falls back to plain CREATE USER and SET PASSWORD.
+type bootstrapDialect struct {
+	ifNotExists  bool
+	alterForPass bool
+}
+
+func newBootstrapDialect(versionStr string) bootstrapDialect {
+	// Default to modern syntax when the version is unknown.
+	if versionStr == "" {
+		return bootstrapDialect{ifNotExists: true, alterForPass: true}
+	}
+	v, err := version.Parse(versionStr)
+	if err != nil {
+		return bootstrapDialect{ifNotExists: true, alterForPass: true}
+	}
+	modern := v.AtLeast(5, 7, 6)
+	return bootstrapDialect{ifNotExists: modern, alterForPass: modern}
+}
+
+func (d bootstrapDialect) createUser(name, idClause string) string {
+	keyword := "CREATE USER "
+	if d.ifNotExists {
+		keyword += "IF NOT EXISTS "
+	}
+	return fmt.Sprintf("%s'%s'@'%%' %s", keyword, escapeName(name), idClause)
+}
+
+func (d bootstrapDialect) setRootPassword(password string) string {
+	if d.alterForPass {
+		return fmt.Sprintf("ALTER USER 'root'@'localhost' IDENTIFIED BY %s", quoteString(password))
+	}
+	return fmt.Sprintf("SET PASSWORD FOR 'root'@'localhost' = PASSWORD(%s)", quoteString(password))
 }
 
 // quoteString single-quotes a SQL string literal, escaping backslashes and

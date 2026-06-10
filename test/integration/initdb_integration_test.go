@@ -20,10 +20,7 @@ package integration
 
 import (
 	"context"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
+	"fmt"
 	"testing"
 	"time"
 
@@ -33,43 +30,19 @@ import (
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/pool"
 )
 
-// buildInstanceContext compiles the manager binary for the container platform
-// and writes it next to a thin Dockerfile, returning the build context dir.
-// Prebuilding avoids compiling Go inside Docker (faster, and builder-agnostic:
-// the production Dockerfile.instance multi-stage build needs BuildKit, which the
-// testcontainers legacy builder does not use).
-func buildInstanceContext(t *testing.T) string {
-	t.Helper()
-	repoRoot, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
+// TestInitdbBootstrapsWorkingServer runs `manager instance initdb` to initialise
+// a fresh data directory and create the application account, then starts mysqld
+// and verifies the account works. It runs across every supported MySQL flavor.
+func TestInitdbBootstrapsWorkingServer(t *testing.T) {
+	for _, f := range flavors {
+		t.Run(f.name, func(t *testing.T) {
+			t.Parallel()
+			runInitdbTest(t, f)
+		})
 	}
-	dir := t.TempDir()
-
-	build := exec.Command("go", "build", "-o", filepath.Join(dir, "manager"), "./cmd/manager")
-	build.Dir = repoRoot
-	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+runtime.GOARCH)
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building manager binary: %v\n%s", err, out)
-	}
-
-	dockerfile := "FROM percona/percona-server:8.0\n" +
-		// XtraBackup tooling (and its bundled private libs) for `instance join`.
-		"COPY --from=percona/percona-xtrabackup:8.0 /usr/bin/xtrabackup /usr/bin/xbstream /usr/bin/\n" +
-		"COPY --from=percona/percona-xtrabackup:8.0 /usr/lib64/libev.so.4 /usr/lib64/libev.so.4.0.0 /usr/lib64/\n" +
-		"COPY --from=percona/percona-xtrabackup:8.0 /usr/lib/private/ /usr/lib/private/\n" +
-		"COPY manager /usr/local/bin/manager\n" +
-		"ENTRYPOINT [\"/usr/local/bin/manager\"]\n"
-	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(dockerfile), 0o600); err != nil {
-		t.Fatalf("writing Dockerfile: %v", err)
-	}
-	return dir
 }
 
-// TestInitdbBootstrapsWorkingServer builds the instance image, runs
-// `manager instance initdb` to initialise a fresh data directory and create the
-// application account, then starts mysqld and verifies the account works.
-func TestInitdbBootstrapsWorkingServer(t *testing.T) {
+func runInitdbTest(t *testing.T, f flavor) {
 	ctx := context.Background()
 
 	const (
@@ -78,27 +51,25 @@ func TestInitdbBootstrapsWorkingServer(t *testing.T) {
 		appPass = "apppass"
 	)
 
+	script := fmt.Sprintf(`set -e
+export MYSQL_ROOT_PASSWORD=rootpass MYSQL_APP_PASSWORD=%s
+manager instance initdb --mysqld=/usr/sbin/mysqld --config='' \
+  --data-dir=/var/lib/mysql --socket=/var/run/mysqld/mysqld.sock \
+  --database=%s --owner=%s --server-version=%s
+exec /usr/sbin/mysqld --datadir=/var/lib/mysql --socket=/var/run/mysqld/mysqld.sock
+`, appPass, appDB, appUser, f.version)
+
 	req := testcontainers.ContainerRequest{
 		FromDockerfile: testcontainers.FromDockerfile{
-			Context:    buildInstanceContext(t),
+			Context:    buildInstanceContext(t, f),
 			Dockerfile: "Dockerfile",
 			KeepImage:  true,
 		},
 		ExposedPorts: []string{"3306/tcp"},
-		Env: map[string]string{
-			"MYSQL_ROOT_PASSWORD": rootPassword,
-			"MYSQL_APP_PASSWORD":  appPass,
-		},
-		// Initialise via our manager, then hand off to mysqld so we can connect.
-		Entrypoint: []string{"bash", "-lc"},
-		Cmd: []string{
-			"manager instance initdb " +
-				"--mysqld=/usr/sbin/mysqld --config='' " +
-				"--data-dir=/var/lib/mysql --socket=/var/run/mysqld/mysqld.sock " +
-				"--database=" + appDB + " --owner=" + appUser + " && " +
-				"exec /usr/sbin/mysqld --datadir=/var/lib/mysql --socket=/var/run/mysqld/mysqld.sock",
-		},
-		WaitingFor: wait.ForListeningPort("3306/tcp").WithStartupTimeout(5 * time.Minute),
+		Env:          map[string]string{"MYSQL_ROOT_PASSWORD": rootPassword, "MYSQL_APP_PASSWORD": appPass},
+		Entrypoint:   []string{"bash", "-lc"},
+		Cmd:          []string{script},
+		WaitingFor:   wait.ForListeningPort("3306/tcp").WithStartupTimeout(5 * time.Minute),
 	}
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
@@ -119,8 +90,6 @@ func TestInitdbBootstrapsWorkingServer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The application account created by initdb must be able to connect and use
-	// its database.
 	db, err := pool.Open(ctx, pool.Config{
 		Host:     host,
 		Port:     int(mapped.Num()),
@@ -144,9 +113,6 @@ func TestInitdbBootstrapsWorkingServer(t *testing.T) {
 		t.Errorf("unexpected row: %d", id)
 	}
 
-	// GTID must be enabled by the initialisation (gtid_executed is non-empty
-	// once any transaction has run with GTID mode on); at minimum the variable
-	// must be readable.
 	var gtidMode string
 	if err := db.QueryRowContext(ctx, "SELECT @@GLOBAL.gtid_mode").Scan(&gtidMode); err != nil {
 		t.Fatalf("reading gtid_mode: %v", err)

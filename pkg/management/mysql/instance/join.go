@@ -143,8 +143,13 @@ func (o *JoinOptions) configureReplication(ctx context.Context, ver version.Vers
 		"--gtid-mode=ON",
 		"--enforce-gtid-consistency=ON",
 		"--log-bin=binlog",
-		"--log-replica-updates=ON",
 	)
+	// log_slave_updates was renamed to log_replica_updates in 8.0.
+	if ver.HasLogReplicaUpdates() {
+		args = append(args, "--log-replica-updates=ON")
+	} else {
+		args = append(args, "--log-slave-updates")
+	}
 
 	sup := NewProcessSupervisor(o.MysqldPath, args, WithShutdownTimeout(o.ReadyTimeout))
 	if err := sup.Start(ctx); err != nil {

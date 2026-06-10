@@ -20,6 +20,7 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -29,42 +30,30 @@ import (
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/pool"
 )
 
-// joinScript drives a full XtraBackup-based replica provisioning inside one
-// container: it initialises a source via `manager instance initdb`, seeds data,
-// backs it up, provisions a replica via `manager instance join`, then runs the
-// replica in the foreground. The operator performs this orchestration across
-// pods in M3; here it is collapsed onto a single host to validate the manager's
-// join path against real Percona + XtraBackup.
-const joinScript = `set -e
-export MYSQL_ROOT_PASSWORD=rootpass MYSQL_APP_PASSWORD=apppass MYSQL_REPLICATION_PASSWORD=replpass
-SRC=/tmp/source REP=/tmp/replica BK=/tmp/backup
-GTID_ARGS="--gtid-mode=ON --enforce-gtid-consistency=ON --log-bin=binlog --log-replica-updates=ON --binlog-format=ROW"
-
-manager instance initdb --mysqld=/usr/sbin/mysqld --config='' \
-  --data-dir=$SRC --socket=/tmp/src.sock \
-  --database=app --owner=appuser --replication-user=repl
-
-/usr/sbin/mysqld --datadir=$SRC --socket=/tmp/src.sock --port=3306 --server-id=1 $GTID_ARGS &
-until mysqladmin --socket=/tmp/src.sock -uroot -p$MYSQL_ROOT_PASSWORD ping >/dev/null 2>&1; do sleep 1; done
-
-mysql --socket=/tmp/src.sock -uroot -p$MYSQL_ROOT_PASSWORD app \
-  -e "CREATE TABLE t (id INT PRIMARY KEY); INSERT INTO t VALUES (1);"
-
-xtrabackup --backup --target-dir=$BK --datadir=$SRC \
-  --socket=/tmp/src.sock --user=root --password=$MYSQL_ROOT_PASSWORD
-
-manager instance join --xtrabackup=xtrabackup --mysqld=/usr/sbin/mysqld --config='' \
-  --backup-dir=$BK --data-dir=$REP --socket=/tmp/reptemp.sock \
-  --server-version=8.0.36 --source-host=127.0.0.1 --source-port=3306 \
-  --replication-user=repl --source-get-public-key
-
-exec /usr/sbin/mysqld --datadir=$REP --socket=/tmp/rep.sock --port=3307 --server-id=2 $GTID_ARGS
-`
-
 // TestJoinProvisionsReplica verifies that `instance join` clones a populated
 // primary via XtraBackup and resumes GTID replication: the pre-existing row is
-// present on the replica, and a subsequent write on the source propagates.
+// present on the replica, and a subsequent write on the source propagates. It
+// runs across every supported MySQL flavor.
 func TestJoinProvisionsReplica(t *testing.T) {
+	for _, f := range flavors {
+		t.Run(f.name, func(t *testing.T) {
+			t.Parallel()
+			runJoinTest(t, f)
+		})
+	}
+}
+
+func runJoinTest(t *testing.T, f flavor) {
+	if !f.modernXtrabackup {
+		// XtraBackup 2.4 (the 5.6/5.7 series) ships binaries built against
+		// glibc 2.28+, which the EOL CentOS-based percona-server:5.6 image
+		// predates, and the CentOS repos needed to install it in-image are
+		// archived. Provisioning 5.6 replicas needs a custom image bundling a
+		// glibc-compatible XtraBackup; the join code itself is version-aware and
+		// covered by unit tests and the 8.0/8.4 e2e.
+		t.Skip("xtrabackup 2.4 is incompatible with the EOL 5.6 base image; needs a custom image")
+	}
+
 	ctx := context.Background()
 
 	const (
@@ -72,15 +61,36 @@ func TestJoinProvisionsReplica(t *testing.T) {
 		appPass = "apppass"
 	)
 
+	// One container drives the whole flow: initialise a source, seed data, back
+	// it up, provision a replica via join, then run the replica in foreground.
+	// The operator performs this across pods in M3.
+	script := fmt.Sprintf(`set -e
+export MYSQL_ROOT_PASSWORD=rootpass MYSQL_APP_PASSWORD=%s MYSQL_REPLICATION_PASSWORD=replpass
+SRC=/tmp/source REP=/tmp/replica BK=/tmp/backup
+GA="%s"
+manager instance initdb --mysqld=/usr/sbin/mysqld --config='' \
+  --data-dir=$SRC --socket=/tmp/src.sock \
+  --database=app --owner=%s --replication-user=repl --server-version=%s
+/usr/sbin/mysqld --datadir=$SRC --socket=/tmp/src.sock --port=3306 --server-id=1 $GA >/tmp/src.log 2>&1 &
+until mysqladmin --socket=/tmp/src.sock -uroot -prootpass ping >/dev/null 2>&1; do sleep 1; done
+mysql --socket=/tmp/src.sock -uroot -prootpass app -e "CREATE TABLE t (id INT PRIMARY KEY); INSERT INTO t VALUES (1);"
+xtrabackup --backup --target-dir=$BK --datadir=$SRC --socket=/tmp/src.sock --user=root --password=rootpass
+manager instance join --xtrabackup=xtrabackup --mysqld=/usr/sbin/mysqld --config='' \
+  --backup-dir=$BK --data-dir=$REP --socket=/tmp/reptemp.sock \
+  --server-version=%s --source-host=127.0.0.1 --source-port=3306 \
+  --replication-user=repl --source-get-public-key
+exec /usr/sbin/mysqld --datadir=$REP --socket=/tmp/rep.sock --port=3307 --server-id=2 $GA
+`, appPass, f.gtidArgs(t), appUser, f.version, f.version)
+
 	req := testcontainers.ContainerRequest{
 		FromDockerfile: testcontainers.FromDockerfile{
-			Context:    buildInstanceContext(t),
+			Context:    buildInstanceContext(t, f),
 			Dockerfile: "Dockerfile",
 			KeepImage:  true,
 		},
 		ExposedPorts: []string{"3306/tcp", "3307/tcp"},
 		Entrypoint:   []string{"bash", "-lc"},
-		Cmd:          []string{joinScript},
+		Cmd:          []string{script},
 		WaitingFor:   wait.ForListeningPort("3307/tcp").WithStartupTimeout(5 * time.Minute),
 	}
 

@@ -110,6 +110,41 @@ func TestBootstrapControlUserValidation(t *testing.T) {
 	}
 }
 
+func TestBootstrapLegacyDialect56(t *testing.T) {
+	out := joinStmts(t, BootstrapParams{
+		RootPassword: "rootpw",
+		Database:     "app",
+		AppUser:      "appuser",
+		AppPassword:  "apppw",
+		MySQLVersion: "5.6.51",
+	})
+	// 5.6 sets the root password with SET PASSWORD / PASSWORD() and has no
+	// CREATE USER ... IF NOT EXISTS.
+	if !strings.Contains(out, "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('rootpw')") {
+		t.Errorf("5.6 root password syntax wrong:\n%s", out)
+	}
+	if strings.Contains(out, "ALTER USER") {
+		t.Errorf("5.6 should not use ALTER USER:\n%s", out)
+	}
+	if strings.Contains(out, "CREATE USER IF NOT EXISTS") {
+		t.Errorf("5.6 CREATE USER should not use IF NOT EXISTS:\n%s", out)
+	}
+	if !strings.Contains(out, "CREATE USER 'appuser'@'%' IDENTIFIED BY 'apppw'") {
+		t.Errorf("5.6 create user syntax wrong:\n%s", out)
+	}
+}
+
+func TestBootstrapModernDialogDefault(t *testing.T) {
+	// An unknown version defaults to modern syntax.
+	out := joinStmts(t, BootstrapParams{RootPassword: "x", Database: "app", AppUser: "u", AppPassword: "p"})
+	if !strings.Contains(out, "ALTER USER 'root'@'localhost'") {
+		t.Errorf("default should be modern ALTER USER:\n%s", out)
+	}
+	if !strings.Contains(out, "CREATE USER IF NOT EXISTS 'u'@'%'") {
+		t.Errorf("default should use IF NOT EXISTS:\n%s", out)
+	}
+}
+
 func TestBootstrapReplicationX509(t *testing.T) {
 	out := joinStmts(t, BootstrapParams{
 		RootPassword:           "rootpw",

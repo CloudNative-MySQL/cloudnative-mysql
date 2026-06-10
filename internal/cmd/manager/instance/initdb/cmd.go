@@ -73,6 +73,7 @@ func NewCommand() *cobra.Command {
 
 			return instance.Initialize(cmd.Context(), instance.InitOptions{
 				MysqldPath: mysqldPath,
+				Version:    serverVersion,
 				DataDir:    dataDir,
 				ConfigFile: configFile,
 				Socket:     socket,
