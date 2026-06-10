@@ -3,6 +3,7 @@ module github.com/yyewolf/cnmysql
 go 1.25.7
 
 require (
+	github.com/go-sql-driver/mysql v1.10.0
 	github.com/onsi/ginkgo/v2 v2.27.2
 	github.com/onsi/gomega v1.38.2
 	github.com/spf13/cobra v1.10.0
@@ -14,6 +15,7 @@ require (
 
 require (
 	cel.dev/expr v0.24.0 // indirect
+	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
