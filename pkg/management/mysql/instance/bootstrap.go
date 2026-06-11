@@ -156,8 +156,16 @@ func BootstrapStatements(p BootstrapParams) ([]string, error) {
 				escapeName(p.BackupUser)),
 		)
 		if p.SupportsDynamicPrivileges {
-			stmts = append(stmts, fmt.Sprintf("GRANT BACKUP_ADMIN ON *.* TO '%s'@'%%'",
-				escapeName(p.BackupUser)))
+			// XtraBackup 8.0 needs BACKUP_ADMIN plus SELECT on these
+			// performance_schema tables (log position, keyring state, group
+			// membership); without them it aborts with ER_TABLEACCESS_DENIED.
+			// All three are 8.0-only, gated with the dynamic-privilege check.
+			stmts = append(stmts,
+				fmt.Sprintf("GRANT BACKUP_ADMIN ON *.* TO '%s'@'%%'", escapeName(p.BackupUser)),
+				fmt.Sprintf("GRANT SELECT ON performance_schema.log_status TO '%s'@'%%'", escapeName(p.BackupUser)),
+				fmt.Sprintf("GRANT SELECT ON performance_schema.keyring_component_status TO '%s'@'%%'", escapeName(p.BackupUser)),
+				fmt.Sprintf("GRANT SELECT ON performance_schema.replication_group_members TO '%s'@'%%'", escapeName(p.BackupUser)),
+			)
 		}
 	}
 

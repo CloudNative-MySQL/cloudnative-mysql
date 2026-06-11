@@ -115,10 +115,24 @@ func TestBootstrapBackupUserWithDynamicPrivileges(t *testing.T) {
 		"CREATE USER IF NOT EXISTS 'cnmysql_backup'@'%' IDENTIFIED BY 'bkpw'",
 		"GRANT RELOAD, PROCESS, LOCK TABLES, REPLICATION CLIENT ON *.* TO 'cnmysql_backup'@'%'",
 		"GRANT BACKUP_ADMIN ON *.* TO 'cnmysql_backup'@'%'",
+		"GRANT SELECT ON performance_schema.log_status TO 'cnmysql_backup'@'%'",
+		"GRANT SELECT ON performance_schema.keyring_component_status TO 'cnmysql_backup'@'%'",
+		"GRANT SELECT ON performance_schema.replication_group_members TO 'cnmysql_backup'@'%'",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
+	}
+}
+
+func TestBootstrapBackupUserLegacyHasNoPerfSchemaGrants(t *testing.T) {
+	out := joinStmts(t, BootstrapParams{
+		RootPassword:   "rootpw",
+		BackupUser:     "cnmysql_backup",
+		BackupPassword: "bkpw",
+	})
+	if strings.Contains(out, "performance_schema") {
+		t.Errorf("legacy server should not grant performance_schema tables:\n%s", out)
 	}
 }
 
