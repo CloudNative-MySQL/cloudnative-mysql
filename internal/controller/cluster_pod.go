@@ -51,7 +51,7 @@ func (r *ClusterReconciler) podSpec(cluster *mysqlv1alpha1.Cluster, plan cluster
 			Name:            "mysql",
 			Image:           plan.Image,
 			ImagePullPolicy: cluster.Spec.ImagePullPolicy,
-			Args:            runArgs(),
+			Args:            runArgs(cluster, plan, inst),
 			Env:             runEnv(plan),
 			EnvFrom:         cluster.Spec.EnvFrom,
 			Ports: []corev1.ContainerPort{
@@ -150,8 +150,8 @@ func joinArgs(cluster *mysqlv1alpha1.Cluster, plan clusterPlan) []string {
 	}
 }
 
-func runArgs() []string {
-	return []string{
+func runArgs(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instancePlan) []string {
+	args := []string{
 		"instance", "run",
 		"--mysqld=" + mysqldBinary,
 		"--config=" + configPath,
@@ -168,16 +168,30 @@ func runArgs() []string {
 		"--tls-key=" + serverTLSPath + "/tls.key",
 		"--tls-client-ca=" + clientCAPath + "/ca.crt",
 	}
+	if inst.IsPrimary {
+		return append(args, "--role="+rolePrimary)
+	}
+	primaryFQDN := plan.primaryName(cluster) + "." + cluster.Namespace + ".svc"
+	return append(args,
+		"--role="+roleReplica,
+		"--source-host="+primaryFQDN,
+		"--source-port=3306",
+		"--replication-user="+replicationUser,
+		"--source-ssl",
+		"--source-ssl-ca="+clientCAPath+"/ca.crt",
+		"--source-ssl-cert="+serverTLSPath+"/tls.crt",
+		"--source-ssl-key="+serverTLSPath+"/tls.key",
+	)
 }
 
 // initEnv is the environment for the init container, which may run initdb (on
-// the primary) or join (on a replica); both need the full set of credentials.
+// the primary) or join (on a replica). Replication uses mTLS-only auth, so the
+// generated replication password is deliberately not exposed to pods.
 func initEnv(plan clusterPlan) []corev1.EnvVar {
 	env := runEnv(plan)
 	env = append(env,
 		secretEnv("MYSQL_ROOT_PASSWORD", plan.RootSecretName),
 		secretEnv("MYSQL_APP_PASSWORD", plan.AppSecretName),
-		secretEnv("MYSQL_REPLICATION_PASSWORD", plan.ReplicationSecret),
 	)
 	return env
 }

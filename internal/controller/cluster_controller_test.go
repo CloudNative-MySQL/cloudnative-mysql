@@ -200,6 +200,9 @@ func TestPodSpecUsesInitContainerAndCertManagerSecrets(t *testing.T) {
 	if got := strings.Join(spec.Containers[0].Args, " "); !strings.Contains(got, "instance run") {
 		t.Fatalf("main container args = %q", got)
 	}
+	if got := strings.Join(spec.Containers[0].Args, " "); !strings.Contains(got, "--role=primary") {
+		t.Fatalf("primary main container should declare primary role: %q", got)
+	}
 	if spec.Containers[0].ReadinessProbe.TCPSocket == nil {
 		t.Fatalf("readiness probe must be TCP because the HTTP API requires mTLS")
 	}
@@ -233,6 +236,20 @@ func TestPodSpecReplicaUsesJoin(t *testing.T) {
 	}
 	if !strings.Contains(got, "--source-host=demo-1.default.svc") {
 		t.Fatalf("replica should replicate from the primary: %q", got)
+	}
+	got = strings.Join(spec.Containers[0].Args, " ")
+	if !strings.Contains(got, "--role=replica") {
+		t.Fatalf("replica main container should declare replica role: %q", got)
+	}
+	if !strings.Contains(got, "--source-host=demo-1.default.svc") {
+		t.Fatalf("replica main container should be able to repair replication source: %q", got)
+	}
+	for _, container := range []corev1.Container{spec.InitContainers[0], spec.Containers[0]} {
+		for _, env := range container.Env {
+			if env.Name == "MYSQL_REPLICATION_PASSWORD" {
+				t.Fatalf("%s must use mTLS-only replication auth, found MYSQL_REPLICATION_PASSWORD env", container.Name)
+			}
+		}
 	}
 }
 
