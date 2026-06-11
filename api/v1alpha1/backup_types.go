@@ -53,6 +53,11 @@ type BackupSpec struct {
 	// +kubebuilder:validation:Required
 	Cluster LocalObjectReference `json:"cluster"`
 
+	// ObjectStore overrides the destination configured on the referenced
+	// Cluster. When omitted, the Cluster's backup object store is used.
+	// +optional
+	ObjectStore *S3ObjectStore `json:"objectStore,omitempty"`
+
 	// Method is the backup method to use.
 	// +kubebuilder:default:=xtrabackup
 	// +optional
@@ -87,9 +92,17 @@ type BackupStatus struct {
 	// +optional
 	BackupID string `json:"backupId,omitempty"`
 
+	// JobName is the Kubernetes Job running this backup.
+	// +optional
+	JobName string `json:"jobName,omitempty"`
+
 	// DestinationPath is the full path of the backup in the object store.
 	// +optional
 	DestinationPath string `json:"destinationPath,omitempty"`
+
+	// SHA256 is the checksum of the uploaded backup artifact.
+	// +optional
+	SHA256 string `json:"sha256,omitempty"`
 
 	// BeginGTID/EndGTID record the GTID range covered by the backup.
 	// +optional

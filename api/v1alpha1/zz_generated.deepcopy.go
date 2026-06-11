@@ -147,6 +147,11 @@ func (in *BackupList) DeepCopyObject() runtime.Object {
 func (in *BackupSpec) DeepCopyInto(out *BackupSpec) {
 	*out = *in
 	out.Cluster = in.Cluster
+	if in.ObjectStore != nil {
+		in, out := &in.ObjectStore, &out.ObjectStore
+		*out = new(S3ObjectStore)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.Online != nil {
 		in, out := &in.Online, &out.Online
 		*out = new(bool)

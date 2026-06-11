@@ -31,6 +31,18 @@ rules:
   - create
   - patch
 - apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - cert-manager.io
   resources:
   - certificates
@@ -46,6 +58,7 @@ rules:
 - apiGroups:
   - mysql.cloudnative-mysql.io
   resources:
+  - backups
   - clusterimagecatalogs
   - clusters
   - imagecatalogs
@@ -56,16 +69,17 @@ rules:
 - apiGroups:
   - mysql.cloudnative-mysql.io
   resources:
-  - clusters/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - mysql.cloudnative-mysql.io
-  resources:
+  - backups/status
   - clusters/status
   verbs:
   - get
   - patch
+  - update
+- apiGroups:
+  - mysql.cloudnative-mysql.io
+  resources:
+  - clusters/finalizers
+  verbs:
   - update
 - apiGroups:
   - rbac.authorization.k8s.io
