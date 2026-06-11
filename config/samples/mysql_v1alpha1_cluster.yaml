@@ -6,14 +6,13 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: cluster-sample
 spec:
-  instances: 3
-  imageName: percona/percona-server:8.0
+  instances: 1
+  imageName: cnmysql-instance:8.0
   storage:
     size: 10Gi
   mysql:
+    serverVersion: 8.0.46
     binlogFormat: ROW
-    semiSync:
-      enabled: true
   bootstrap:
     initdb:
       database: app
