@@ -4,11 +4,13 @@
 package e2e
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -254,17 +256,55 @@ var _ = Describe("Manager", Ordered, func() {
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput, err := getMetricsOutput()
-		// Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+		It("should bootstrap a single MySQL instance", func() {
+			By("applying the sample Cluster")
+			cmd := exec.Command("kubectl", "apply", "-f", "config/samples/mysql_v1alpha1_cluster.yaml")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to apply sample Cluster")
+
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "-f", "config/samples/mysql_v1alpha1_cluster.yaml",
+					"--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			})
+
+			By("waiting for the Cluster to become ready")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "cluster", "cluster-sample",
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("True"))
+
+				cmd = exec.Command("kubectl", "get", "cluster", "cluster-sample",
+					"-o", "jsonpath={.status.currentPrimary}")
+				output, err = utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("cluster-sample-1"))
+			}, 8*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("verifying that the application user can write")
+			password := applicationPassword()
+			sql := "CREATE TABLE IF NOT EXISTS e2e (id INT PRIMARY KEY); " +
+				"REPLACE INTO e2e VALUES (1); SELECT id FROM e2e WHERE id = 1;"
+			cmd = exec.Command("kubectl", "exec", "cluster-sample-1", "--",
+				"mysql", "-uapp", "-p"+password, "app", "-e", sql)
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to write through sample Cluster")
+			Expect(output).To(ContainSubstring("1"))
+		})
 	})
 })
+
+func applicationPassword() string {
+	cmd := exec.Command("kubectl", "get", "secret", "cluster-sample-app",
+		"-o", "jsonpath={.data.password}")
+	output, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to read application password")
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(output))
+	Expect(err).NotTo(HaveOccurred(), "Failed to decode application password")
+	return string(decoded)
+}
 
 // serviceAccountToken returns a token for the specified service account in the given namespace.
 // It uses the Kubernetes TokenRequest API to generate a token by directly sending a request

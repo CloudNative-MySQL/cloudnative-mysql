@@ -18,6 +18,8 @@ import (
 var (
 	// managerImage is the manager image to be built and loaded for testing.
 	managerImage = "example.com/cnmysql:v0.0.1"
+	// instanceImage is the local M3 instance image consumed by the sample Cluster.
+	instanceImage = "cnmysql-instance:8.0"
 	// shouldCleanupCertManager tracks whether CertManager was installed by this suite.
 	shouldCleanupCertManager = false
 )
@@ -45,6 +47,15 @@ var _ = BeforeSuite(func() {
 	By("loading the manager image on Kind")
 	err = utils.LoadImageToKindClusterWithName(managerImage)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")
+
+	By("building the instance image")
+	cmd = exec.Command("make", "docker-build-instance", "INSTANCE_VERSION=8.0")
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the instance image")
+
+	By("loading the instance image on Kind")
+	err = utils.LoadImageToKindClusterWithName(instanceImage)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the instance image into Kind")
 
 	configureKubectlKubeRC()
 	setupCertManager()
