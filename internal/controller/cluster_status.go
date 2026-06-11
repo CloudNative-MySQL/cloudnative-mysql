@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
+	"github.com/yyewolf/cnmysql/pkg/management/mysql/webserver"
 )
 
 type observedCluster struct {
@@ -45,22 +46,25 @@ type observedCluster struct {
 	InstanceNames []string
 	// GTIDByInstance maps instance name to its gtid_executed set.
 	GTIDByInstance map[string]string
+	// StatusByInstance maps instance name to the last successful control status.
+	StatusByInstance map[string]*webserver.Status
 }
 
 // observe polls every desired instance and aggregates cluster-level readiness.
 // The cluster is Ready when all desired instances report ready.
 func (r *ClusterReconciler) observe(ctx context.Context, cluster *mysqlv1alpha1.Cluster, plan clusterPlan) (observedCluster, error) {
-	statusClient := r.StatusClient
-	if statusClient == nil {
-		statusClient = &HTTPStatusClient{Client: r.Client}
+	controlClient := r.ControlClient
+	if controlClient == nil {
+		controlClient = &HTTPControlClient{Client: r.Client}
 	}
 
 	observed := observedCluster{
-		Plan:           plan,
-		PrimaryName:    plan.primaryName(cluster),
-		InstanceNames:  plan.instanceNames(cluster),
-		GTIDByInstance: map[string]string{},
-		Progressing:    true,
+		Plan:             plan,
+		PrimaryName:      plan.primaryName(cluster),
+		InstanceNames:    plan.instanceNames(cluster),
+		GTIDByInstance:   map[string]string{},
+		StatusByInstance: map[string]*webserver.Status{},
+		Progressing:      true,
 	}
 
 	for i := 1; i <= plan.Instances; i++ {
@@ -75,9 +79,13 @@ func (r *ClusterReconciler) observe(ctx context.Context, cluster *mysqlv1alpha1.
 		if !podReady(pod) {
 			continue
 		}
-		status, err := statusClient.Status(ctx, cluster, inst.Name)
+		status, err := controlClient.Status(ctx, cluster, inst.Name)
 		if err != nil {
 			continue
+		}
+		observed.StatusByInstance[inst.Name] = status
+		if status.Role == webserver.RolePrimary {
+			observed.PrimaryName = inst.Name
 		}
 		if status.GTIDExecuted != "" {
 			observed.GTIDByInstance[inst.Name] = status.GTIDExecuted

@@ -155,7 +155,11 @@ func (c *Controller) Status(ctx context.Context) (*webserver.Status, error) {
 
 // Promote transitions a replica to primary.
 func (c *Controller) Promote(ctx context.Context) error {
-	return c.repl.Promote(ctx)
+	if err := c.repl.Promote(ctx); err != nil {
+		return err
+	}
+	c.expected = webserver.RolePrimary
+	return nil
 }
 
 // Demote makes a primary read-only.
@@ -172,7 +176,11 @@ func (c *Controller) EnsureReplicaStarted(ctx context.Context) error {
 // EnsureReplicaConfigured restores missing replication source metadata and
 // resumes stopped replication threads for an expected replica.
 func (c *Controller) EnsureReplicaConfigured(ctx context.Context, opts replication.SourceOptions) error {
-	return c.repl.EnsureReplicaConfigured(ctx, opts)
+	if err := c.repl.EnsureReplicaConfigured(ctx, opts); err != nil {
+		return err
+	}
+	c.expected = webserver.RoleReplica
+	return nil
 }
 
 // Restart restarts mysqld via the supervisor.

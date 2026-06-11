@@ -24,6 +24,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
@@ -127,6 +128,37 @@ func TestScaleDownRemovesPodRetainsPVC(t *testing.T) {
 	// PVC retained per the M4 policy.
 	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: "default", Name: "demo-3"}, &corev1.PersistentVolumeClaim{}); err != nil {
 		t.Fatalf("replica PVC should be retained: %v", err)
+	}
+}
+
+func TestScaleDownKeepsCurrentPrimaryByName(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cluster := baseCluster()
+	cluster.Status.CurrentPrimary = "demo-3"
+	scheme := testScheme(t)
+	objects := []client.Object{cluster}
+	for i := 1; i <= 3; i++ {
+		name := instanceName(cluster, i)
+		objects = append(objects, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: cluster.Namespace,
+			Labels:    map[string]string{clusterLabel: cluster.Name},
+		}})
+	}
+	reconciler := &ClusterReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build(),
+		Scheme: scheme,
+	}
+	plan := testPlan()
+	plan.Instances = 2
+	plan.PrimaryName = "demo-3"
+
+	if err := reconciler.scaleDownReplicas(ctx, cluster, plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: "demo-3"}, &corev1.Pod{}); err != nil {
+		t.Fatalf("current primary should be kept: %v", err)
 	}
 }
 

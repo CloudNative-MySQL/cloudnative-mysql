@@ -32,28 +32,28 @@ import (
 // SourceOptions describes how a replica connects to its replication source.
 type SourceOptions struct {
 	// Host and Port of the source instance.
-	Host string
-	Port int
+	Host string `json:"host"`
+	Port int    `json:"port"`
 	// User and Password of the replication account.
-	User     string
-	Password string
+	User     string `json:"user"`
+	Password string `json:"password,omitempty"`
 	// AutoPosition enables GTID auto-positioning (SOURCE_AUTO_POSITION=1).
-	AutoPosition bool
+	AutoPosition bool `json:"autoPosition"`
 	// SSL turns on TLS for the replication connection.
-	SSL bool
+	SSL bool `json:"ssl"`
 	// SSLCA, SSLCert and SSLKey configure mTLS to the source. When all are set
 	// they are added to the statement and SSL is implied.
-	SSLCA   string
-	SSLCert string
-	SSLKey  string
+	SSLCA   string `json:"sslCA,omitempty"`
+	SSLCert string `json:"sslCert,omitempty"`
+	SSLKey  string `json:"sslKey,omitempty"`
 	// ConnectRetry and RetryCount tune reconnection behaviour. Zero means the
 	// server default.
-	ConnectRetry int
-	RetryCount   int
+	ConnectRetry int `json:"connectRetry,omitempty"`
+	RetryCount   int `json:"retryCount,omitempty"`
 	// GetPublicKey requests the source's public key for caching_sha2_password
 	// authentication over a non-TLS connection (MySQL 8.0+). Not needed when
 	// using mTLS.
-	GetPublicKey bool
+	GetPublicKey bool `json:"getPublicKey,omitempty"`
 }
 
 // ChangeSourceStatement builds the CHANGE REPLICATION SOURCE TO (8.0.23+) or

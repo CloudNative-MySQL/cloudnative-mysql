@@ -23,22 +23,27 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/yyewolf/cnmysql/pkg/management/mysql/replication"
 )
 
 // fakeController is a configurable InstanceController for handler tests.
 type fakeController struct {
-	healthErr  error
-	readyErr   error
-	status     *Status
-	statusErr  error
-	promoteErr error
-	demoteErr  error
-	restartErr error
+	healthErr    error
+	readyErr     error
+	status       *Status
+	statusErr    error
+	promoteErr   error
+	demoteErr    error
+	configureErr error
+	restartErr   error
 
-	promoteCalled bool
-	demoteCalled  bool
-	restartCalled bool
+	promoteCalled   bool
+	demoteCalled    bool
+	configureSource *replication.SourceOptions
+	restartCalled   bool
 }
 
 func (f *fakeController) Healthz(context.Context) error { return f.healthErr }
@@ -48,6 +53,10 @@ func (f *fakeController) Status(context.Context) (*Status, error) {
 }
 func (f *fakeController) Promote(context.Context) error { f.promoteCalled = true; return f.promoteErr }
 func (f *fakeController) Demote(context.Context) error  { f.demoteCalled = true; return f.demoteErr }
+func (f *fakeController) EnsureReplicaConfigured(_ context.Context, opts replication.SourceOptions) error {
+	f.configureSource = &opts
+	return f.configureErr
+}
 func (f *fakeController) Restart(context.Context) error { f.restartCalled = true; return f.restartErr }
 
 // backupController is an InstanceController that also streams a backup.
@@ -95,6 +104,14 @@ func do(t *testing.T, h http.Handler, method, path string) *httptest.ResponseRec
 	t.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(method, path, nil)
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func doWithBody(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	h.ServeHTTP(rec, req)
 	return rec
 }
@@ -174,6 +191,14 @@ func TestLifecycleActions(t *testing.T) {
 	}
 	if rec := do(t, h, http.MethodPost, "/demote"); rec.Code != http.StatusOK || !fc.demoteCalled {
 		t.Errorf("demote = %d called=%v", rec.Code, fc.demoteCalled)
+	}
+	body := `{"source":{"host":"demo-2.default.svc","port":3306,"user":"cnmysql_repl","autoPosition":true,"ssl":true}}`
+	rec := doWithBody(t, h, http.MethodPost, "/replica/source", body)
+	if rec.Code != http.StatusOK || fc.configureSource == nil {
+		t.Errorf("configure replica = %d source=%#v", rec.Code, fc.configureSource)
+	}
+	if fc.configureSource.Host != "demo-2.default.svc" || !fc.configureSource.AutoPosition {
+		t.Errorf("configure source = %#v", fc.configureSource)
 	}
 	if rec := do(t, h, http.MethodPost, "/restart"); rec.Code != http.StatusOK || !fc.restartCalled {
 		t.Errorf("restart = %d called=%v", rec.Code, fc.restartCalled)

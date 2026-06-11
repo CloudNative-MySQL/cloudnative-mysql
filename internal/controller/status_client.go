@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -30,18 +31,70 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
+	"github.com/yyewolf/cnmysql/pkg/management/mysql/replication"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/webserver"
 )
 
-// HTTPStatusClient reads instance status through the mTLS control API exposed
-// by the instance manager.
-type HTTPStatusClient struct {
+// HTTPControlClient drives the mTLS control API exposed by the instance manager.
+type HTTPControlClient struct {
 	Client     client.Client
 	HTTPClient *http.Client
 }
 
+// HTTPStatusClient reads instance status through the mTLS control API exposed
+// by the instance manager.
+type HTTPStatusClient = HTTPControlClient
+
 // Status fetches /status from the per-instance Service.
-func (c *HTTPStatusClient) Status(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string) (*webserver.Status, error) {
+func (c *HTTPControlClient) Status(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string) (*webserver.Status, error) {
+	resp, err := c.do(ctx, cluster, instanceName, http.MethodGet, "/status", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("instance status returned %s", resp.Status)
+	}
+	var status webserver.Status
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return nil, err
+	}
+	return &status, nil
+}
+
+// Promote asks the instance manager to promote an instance to primary.
+func (c *HTTPControlClient) Promote(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string) error {
+	return c.action(ctx, cluster, instanceName, "/promote", nil)
+}
+
+// Demote asks the instance manager to make an instance read-only.
+func (c *HTTPControlClient) Demote(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string) error {
+	return c.action(ctx, cluster, instanceName, "/demote", nil)
+}
+
+// ConfigureReplica points an instance at the requested source and starts
+// replication.
+func (c *HTTPControlClient) ConfigureReplica(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string, source replication.SourceOptions) error {
+	return c.action(ctx, cluster, instanceName, "/replica/source", webserver.ConfigureReplicaRequest{Source: source})
+}
+
+func (c *HTTPControlClient) action(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName, path string, body any) error {
+	resp, err := c.do(ctx, cluster, instanceName, http.MethodPost, path, body)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("instance action %s on %s returned %s", path, instanceName, resp.Status)
+	}
+	return nil
+}
+
+func (c *HTTPControlClient) do(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName, method, path string, body any) (*http.Response, error) {
 	conn := statusTLS{
 		ServiceName:     instanceName,
 		CASecretName:    cluster.Name + "-ca",
@@ -67,26 +120,25 @@ func (c *HTTPStatusClient) Status(ctx context.Context, cluster *mysqlv1alpha1.Cl
 	clientCopy := *httpClient
 	clientCopy.Transport = transport
 
-	url := fmt.Sprintf("https://%s.%s.svc:8080/status", conn.ServiceName, cluster.Namespace)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	var requestBody *bytes.Reader
+	if body == nil {
+		requestBody = bytes.NewReader(nil)
+	} else {
+		payload, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		requestBody = bytes.NewReader(payload)
+	}
+	url := fmt.Sprintf("https://%s.%s.svc:8080%s", conn.ServiceName, cluster.Namespace, path)
+	req, err := http.NewRequestWithContext(ctx, method, url, requestBody)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := clientCopy.Do(req)
-	if err != nil {
-		return nil, err
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("instance status returned %s", resp.Status)
-	}
-	var status webserver.Status
-	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
-		return nil, err
-	}
-	return &status, nil
+	return clientCopy.Do(req)
 }
 
 // statusTLS holds the names needed to build the mTLS connection to an instance
@@ -97,7 +149,7 @@ type statusTLS struct {
 	ClientTLSSecret string
 }
 
-func (c *HTTPStatusClient) transport(ctx context.Context, namespace string, conn statusTLS) (*http.Transport, error) {
+func (c *HTTPControlClient) transport(ctx context.Context, namespace string, conn statusTLS) (*http.Transport, error) {
 	caSecret := &corev1.Secret{}
 	if err := c.Client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: conn.CASecretName}, caSecret); err != nil {
 		return nil, err

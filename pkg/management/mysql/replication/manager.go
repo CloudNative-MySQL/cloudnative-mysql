@@ -19,6 +19,7 @@ package replication
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/pool"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/version"
@@ -103,10 +104,17 @@ func (m *Manager) EnsureReplicaConfigured(ctx context.Context, opts SourceOption
 	if !state.Configured {
 		return m.ConfigureSource(ctx, opts)
 	}
+	if !sameSourceHost(state.SourceHost, opts.Host) {
+		return m.ConfigureSource(ctx, opts)
+	}
 	if state.IORunning && state.SQLRunning {
 		return nil
 	}
 	return m.StartReplica(ctx)
+}
+
+func sameSourceHost(current, desired string) bool {
+	return strings.EqualFold(strings.TrimSuffix(current, "."), strings.TrimSuffix(desired, "."))
 }
 
 // EnsureReplicaStarted starts replication when this server has a configured

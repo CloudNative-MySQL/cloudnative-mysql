@@ -290,6 +290,12 @@ func (r *ClusterReconciler) ensurePod(ctx context.Context, cluster *mysqlv1alpha
 	if pod.Annotations[podTemplateHashAnnotation] != annotations[podTemplateHashAnnotation] {
 		return r.Delete(ctx, pod)
 	}
+	if !maps.Equal(pod.Labels, labels) || !maps.Equal(pod.Annotations, annotations) {
+		before := pod.DeepCopy()
+		pod.Labels = labels
+		pod.Annotations = annotations
+		return r.Patch(ctx, pod, client.MergeFrom(before))
+	}
 	return nil
 }
 
@@ -308,20 +314,51 @@ func podAnnotations(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst insta
 	}
 	annotations[configMapAnnotation] = inst.ConfigMapName
 	annotations[configHashAnnotation] = configHash
+	stablePlan := plan
+	stablePlan.PrimaryName = instanceName(cluster, 1)
+	stableInst := stablePlan.instanceFor(cluster, inst.Ordinal)
+	stableConfig, err := renderMyCnf(cluster, stablePlan, stableInst)
+	if err != nil {
+		return nil, err
+	}
+	stableConfigHash, err := hashObject(stableConfig)
+	if err != nil {
+		return nil, err
+	}
+	templateLabels := maps.Clone(labels)
+	delete(templateLabels, roleLabel)
+	templateAnnotations := maps.Clone(annotations)
+	templateAnnotations[configHashAnnotation] = stableConfigHash
 	templateHash, err := hashObject(struct {
 		Labels      map[string]string
 		Annotations map[string]string
 		Spec        corev1.PodSpec
 	}{
-		Labels:      labels,
-		Annotations: annotations,
-		Spec:        spec,
+		Labels:      templateLabels,
+		Annotations: templateAnnotations,
+		Spec:        restartTriggeringPodSpec(cluster, stablePlan, stableInst, spec),
 	})
 	if err != nil {
 		return nil, err
 	}
 	annotations[podTemplateHashAnnotation] = templateHash
 	return annotations, nil
+}
+
+func restartTriggeringPodSpec(cluster *mysqlv1alpha1.Cluster, stablePlan clusterPlan, stableInst instancePlan, actual corev1.PodSpec) corev1.PodSpec {
+	stable := actual.DeepCopy()
+	stableTemplate := (&ClusterReconciler{}).podSpec(cluster, stablePlan, stableInst)
+	if len(stable.InitContainers) == len(stableTemplate.InitContainers) {
+		for i := range stable.InitContainers {
+			stable.InitContainers[i].Args = stableTemplate.InitContainers[i].Args
+		}
+	}
+	if len(stable.Containers) == len(stableTemplate.Containers) {
+		for i := range stable.Containers {
+			stable.Containers[i].Args = stableTemplate.Containers[i].Args
+		}
+	}
+	return *stable
 }
 
 func hashObject(value any) (string, error) {

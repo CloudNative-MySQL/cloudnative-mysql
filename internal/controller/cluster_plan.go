@@ -32,6 +32,8 @@ type clusterPlan struct {
 	ServerVersion string
 	// Instances is the desired number of MySQL instances (1 primary + replicas).
 	Instances int
+	// PrimaryName is the instance currently expected to be primary.
+	PrimaryName string
 
 	// Cluster-wide secret names.
 	RootSecretName    string
@@ -71,8 +73,11 @@ type instancePlan struct {
 	ServerTLSSecret string
 }
 
-// primaryName is the bootstrap instance and, throughout M4, the fixed primary.
+// primaryName is the expected primary, falling back to the bootstrap instance.
 func (p clusterPlan) primaryName(cluster *mysqlv1alpha1.Cluster) string {
+	if p.PrimaryName != "" {
+		return p.PrimaryName
+	}
 	return instanceName(cluster, 1)
 }
 
@@ -92,7 +97,7 @@ func (p clusterPlan) instanceFor(cluster *mysqlv1alpha1.Cluster, ordinal int) in
 		Name:            name,
 		Ordinal:         ordinal,
 		ServerID:        ordinal,
-		IsPrimary:       ordinal == 1,
+		IsPrimary:       name == p.primaryName(cluster),
 		PVCName:         name,
 		ConfigMapName:   name + "-config",
 		ServiceName:     name,
@@ -147,6 +152,7 @@ func (r *ClusterReconciler) buildPlan(ctx context.Context, cluster *mysqlv1alpha
 		Image:             image,
 		ServerVersion:     serverVersion,
 		Instances:         cluster.Spec.Instances,
+		PrimaryName:       cluster.Status.CurrentPrimary,
 		RootSecretName:    cluster.Name + "-root",
 		AppSecretName:     cluster.Name + "-app",
 		ReplicationSecret: cluster.Name + "-replication",
@@ -163,6 +169,9 @@ func (r *ClusterReconciler) buildPlan(ctx context.Context, cluster *mysqlv1alpha
 	}
 	if plan.Instances == 0 {
 		plan.Instances = 1
+	}
+	if plan.PrimaryName == "" {
+		plan.PrimaryName = instanceName(cluster, 1)
 	}
 	if cluster.Spec.RootPasswordSecret != nil && cluster.Spec.RootPasswordSecret.Name != "" {
 		plan.RootSecretName = cluster.Spec.RootPasswordSecret.Name

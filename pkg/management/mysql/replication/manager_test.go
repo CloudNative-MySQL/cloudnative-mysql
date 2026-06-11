@@ -155,6 +155,27 @@ func TestEnsureReplicaConfiguredConfiguresMissingSource(t *testing.T) {
 	}
 }
 
+func TestEnsureReplicaConfiguredRepointsWrongSource(t *testing.T) {
+	m, mock := newManager(t, "8.0.36")
+
+	mock.ExpectQuery("SHOW REPLICA STATUS").
+		WillReturnRows(sqlmock.NewRows([]string{"Source_Host", "Replica_IO_Running", "Replica_SQL_Running"}).
+			AddRow("cluster-sample-1.default.svc", "Yes", "Yes"))
+	mock.ExpectExec("STOP REPLICA").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CHANGE REPLICATION SOURCE TO").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("START REPLICA").WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err := m.EnsureReplicaConfigured(context.Background(), SourceOptions{
+		Host: "cluster-sample-2.default.svc", Port: 3306, User: "repl", AutoPosition: true,
+	})
+	if err != nil {
+		t.Fatalf("EnsureReplicaConfigured: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Error(err)
+	}
+}
+
 func TestPromoteOrdering(t *testing.T) {
 	m, mock := newManager(t, "8.0.36")
 

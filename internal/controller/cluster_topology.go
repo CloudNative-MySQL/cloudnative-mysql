@@ -78,9 +78,9 @@ func (r *ClusterReconciler) instancePodReady(ctx context.Context, cluster *mysql
 	return podReady(pod), nil
 }
 
-// scaleDownReplicas removes instances whose ordinal exceeds the desired count,
-// highest ordinal first. Per the M4 retention policy the PVC is left in place
-// for the user to keep or delete; the primary (ordinal 1) is never removed.
+// scaleDownReplicas removes instances whose ordinal exceeds the desired count.
+// Per the M4 retention policy the PVC is left in place for the user to keep or
+// delete; the current primary is never removed.
 func (r *ClusterReconciler) scaleDownReplicas(ctx context.Context, cluster *mysqlv1alpha1.Cluster, plan clusterPlan) error {
 	pods := &corev1.PodList{}
 	if err := r.List(ctx, pods, client.InNamespace(cluster.Namespace), client.MatchingLabels{clusterLabel: cluster.Name}); err != nil {
@@ -89,7 +89,7 @@ func (r *ClusterReconciler) scaleDownReplicas(ctx context.Context, cluster *mysq
 	for i := range pods.Items {
 		pod := &pods.Items[i]
 		ordinal, ok := instanceOrdinal(cluster, pod.Name)
-		if !ok || ordinal <= plan.Instances || ordinal == 1 {
+		if !ok || ordinal <= plan.Instances || pod.Name == plan.primaryName(cluster) {
 			continue
 		}
 		if err := r.removeInstanceResources(ctx, cluster, plan.instanceFor(cluster, ordinal)); err != nil {

@@ -28,6 +28,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
+	"github.com/yyewolf/cnmysql/pkg/management/mysql/replication"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/webserver"
 )
 
@@ -52,6 +53,7 @@ const (
 	phaseProvisioning = "Provisioning"
 	phaseReady        = "Ready"
 	phaseBlocked      = "Blocked"
+	phaseSwitchover   = "Switchover"
 
 	dataDir       = "/var/lib/mysql"
 	socketPath    = "/var/run/mysqld/mysqld.sock"
@@ -72,17 +74,21 @@ const (
 	readyResync = 30 * time.Second
 )
 
-// InstanceStatusClient reads the status served by an instance manager.
-type InstanceStatusClient interface {
+// InstanceControlClient drives the mTLS control API served by each instance
+// manager.
+type InstanceControlClient interface {
 	Status(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string) (*webserver.Status, error)
+	Promote(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string) error
+	Demote(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string) error
+	ConfigureReplica(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string, source replication.SourceOptions) error
 }
 
 // ClusterReconciler reconciles a Cluster object.
 type ClusterReconciler struct {
 	client.Client
-	Scheme       *runtime.Scheme
-	Recorder     record.EventRecorder
-	StatusClient InstanceStatusClient
+	Scheme        *runtime.Scheme
+	Recorder      record.EventRecorder
+	ControlClient InstanceControlClient
 }
 
 // +kubebuilder:rbac:groups=mysql.cloudnative-mysql.io,resources=clusters,verbs=get;list;watch
@@ -163,6 +169,20 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	observed, err := r.observe(ctx, cluster, plan)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	switched, err := r.reconcilePrimaryChange(ctx, cluster, plan, observed)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if switched {
+		return ctrl.Result{RequeueAfter: provisioningRequeue}, nil
+	}
+	repaired, err := r.reconcileReplicaSources(ctx, cluster, plan, observed)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if repaired {
+		return ctrl.Result{RequeueAfter: provisioningRequeue}, nil
 	}
 	if err := r.patchStatus(ctx, cluster, observed); err != nil {
 		return ctrl.Result{}, err

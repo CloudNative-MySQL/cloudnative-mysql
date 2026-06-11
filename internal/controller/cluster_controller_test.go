@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
+	"github.com/yyewolf/cnmysql/pkg/management/mysql/replication"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/webserver"
 )
 
@@ -84,6 +85,47 @@ func (readyStatusClient) Status(context.Context, *mysqlv1alpha1.Cluster, string)
 		GTIDExecuted:  "uuid:1-10",
 		UptimeSeconds: int64(time.Minute.Seconds()),
 	}, nil
+}
+
+func (readyStatusClient) Promote(context.Context, *mysqlv1alpha1.Cluster, string) error {
+	return nil
+}
+
+func (readyStatusClient) Demote(context.Context, *mysqlv1alpha1.Cluster, string) error {
+	return nil
+}
+
+func (readyStatusClient) ConfigureReplica(context.Context, *mysqlv1alpha1.Cluster, string, replication.SourceOptions) error {
+	return nil
+}
+
+type recordingControlClient struct {
+	statuses   map[string]*webserver.Status
+	demoted    []string
+	promoted   []string
+	configured map[string]replication.SourceOptions
+}
+
+func (c *recordingControlClient) Status(_ context.Context, _ *mysqlv1alpha1.Cluster, instanceName string) (*webserver.Status, error) {
+	return c.statuses[instanceName], nil
+}
+
+func (c *recordingControlClient) Promote(_ context.Context, _ *mysqlv1alpha1.Cluster, instanceName string) error {
+	c.promoted = append(c.promoted, instanceName)
+	return nil
+}
+
+func (c *recordingControlClient) Demote(_ context.Context, _ *mysqlv1alpha1.Cluster, instanceName string) error {
+	c.demoted = append(c.demoted, instanceName)
+	return nil
+}
+
+func (c *recordingControlClient) ConfigureReplica(_ context.Context, _ *mysqlv1alpha1.Cluster, instanceName string, source replication.SourceOptions) error {
+	if c.configured == nil {
+		c.configured = map[string]replication.SourceOptions{}
+	}
+	c.configured[instanceName] = source
+	return nil
 }
 
 func TestBuildPlanDefaultsToLocalInstanceImage(t *testing.T) {
@@ -304,6 +346,53 @@ func TestEnsurePodRecreatesWhenTemplateHashChanges(t *testing.T) {
 	}
 }
 
+func TestEnsurePodDoesNotRecreateForPrimaryRoleChange(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cluster := baseCluster()
+	cluster.Spec.Instances = 2
+	plan := testPlan()
+	plan.Instances = 2
+	inst := plan.instanceFor(cluster, 1)
+	labels := labelsFor(cluster, inst.Name, roleOf(inst))
+	spec := (&ClusterReconciler{}).podSpec(cluster, plan, inst)
+	annotations, err := podAnnotations(cluster, plan, inst, labels, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	existingPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        inst.Name,
+			Namespace:   cluster.Namespace,
+			Labels:      labels,
+			Annotations: annotations,
+		},
+		Spec: spec,
+	}
+	scheme := testScheme(t)
+	reconciler := &ClusterReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, existingPod).Build(),
+		Scheme: scheme,
+	}
+
+	plan.PrimaryName = "demo-2"
+	inst = plan.instanceFor(cluster, 1)
+	if err := reconciler.ensurePod(ctx, cluster, plan, inst); err != nil {
+		t.Fatal(err)
+	}
+
+	got := &corev1.Pod{}
+	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: "demo-1"}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.DeletionTimestamp != nil {
+		t.Fatal("pod should not be deleted when only the primary role changes")
+	}
+	if got.Labels[roleLabel] != roleReplica {
+		t.Fatalf("role label = %q, want replica", got.Labels[roleLabel])
+	}
+}
+
 func TestUnsupportedReasonNamesDeferredMilestones(t *testing.T) {
 	t.Parallel()
 	// Replicas are now supported.
@@ -376,6 +465,7 @@ func TestReconcileBlocksUnsupportedClusterShape(t *testing.T) {
 
 func TestReconcileBootstrapsSingleInstanceToReady(t *testing.T) {
 	t.Parallel()
+	const primaryName = "demo-1"
 	ctx := context.Background()
 	cluster := baseCluster()
 	scheme := testScheme(t)
@@ -386,9 +476,9 @@ func TestReconcileBootstrapsSingleInstanceToReady(t *testing.T) {
 			WithStatusSubresource(&mysqlv1alpha1.Cluster{}).
 			WithObjects(cluster).
 			Build(),
-		Scheme:       scheme,
-		Recorder:     recorder,
-		StatusClient: readyStatusClient{},
+		Scheme:        scheme,
+		Recorder:      recorder,
+		ControlClient: readyStatusClient{},
 	}
 	request := ctrl.Request{NamespacedName: types.NamespacedName{
 		Namespace: cluster.Namespace,
@@ -465,8 +555,8 @@ func TestReconcileBootstrapsSingleInstanceToReady(t *testing.T) {
 	if got.Status.Phase != phaseReady {
 		t.Fatalf("phase = %q, want %q", got.Status.Phase, phaseReady)
 	}
-	if got.Status.CurrentPrimary != "demo-1" {
-		t.Fatalf("current primary = %q, want demo-1", got.Status.CurrentPrimary)
+	if got.Status.CurrentPrimary != primaryName {
+		t.Fatalf("current primary = %q, want %s", got.Status.CurrentPrimary, primaryName)
 	}
 	if got.Status.ReadyInstances != 1 {
 		t.Fatalf("ready instances = %d, want 1", got.Status.ReadyInstances)
@@ -474,7 +564,7 @@ func TestReconcileBootstrapsSingleInstanceToReady(t *testing.T) {
 	if got.Status.Image != defaultInstanceImage {
 		t.Fatalf("status image = %q, want %q", got.Status.Image, defaultInstanceImage)
 	}
-	if got.Status.GTIDExecutedByInstance["demo-1"] != "uuid:1-10" {
+	if got.Status.GTIDExecutedByInstance[primaryName] != "uuid:1-10" {
 		t.Fatalf("gtid status = %#v", got.Status.GTIDExecutedByInstance)
 	}
 	ready := apimeta.FindStatusCondition(got.Status.Conditions, conditionReady)
@@ -494,6 +584,152 @@ func TestReconcileBootstrapsSingleInstanceToReady(t *testing.T) {
 	case event := <-recorder.Events:
 		t.Fatalf("unexpected event on steady-state resync: %q", event)
 	default:
+	}
+}
+
+func TestReconcilePrimaryChangeSwitchesToHealthyReplica(t *testing.T) {
+	t.Parallel()
+	const (
+		oldPrimary = "demo-1"
+		newPrimary = "demo-2"
+		replica    = "demo-3"
+	)
+	ctx := context.Background()
+	cluster := baseCluster()
+	cluster.Spec.Instances = 3
+	cluster.Status.CurrentPrimary = oldPrimary
+	cluster.Status.TargetPrimary = newPrimary
+	scheme := testScheme(t)
+	pod1 := readyPod(cluster, oldPrimary, rolePrimary)
+	pod2 := readyPod(cluster, newPrimary, roleReplica)
+	pod3 := readyPod(cluster, replica, roleReplica)
+	control := &recordingControlClient{}
+	reconciler := &ClusterReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&mysqlv1alpha1.Cluster{}).
+			WithObjects(cluster, pod1, pod2, pod3).
+			Build(),
+		Scheme:        scheme,
+		ControlClient: control,
+	}
+	plan := testPlan()
+	plan.Instances = 3
+	observed := observedCluster{
+		Phase:          phaseReady,
+		PhaseReason:    "All instances are ready",
+		Ready:          true,
+		Progressing:    false,
+		Plan:           plan,
+		PrimaryName:    oldPrimary,
+		ReadyInstances: 3,
+		InstanceNames:  []string{oldPrimary, newPrimary, replica},
+		GTIDByInstance: map[string]string{oldPrimary: "uuid:1-10", newPrimary: "uuid:1-10", replica: "uuid:1-10"},
+		StatusByInstance: map[string]*webserver.Status{
+			oldPrimary: {InstanceName: oldPrimary, Role: webserver.RolePrimary, IsReady: true, GTIDExecuted: "uuid:1-10"},
+			newPrimary: {
+				InstanceName: newPrimary,
+				Role:         webserver.RoleReplica,
+				IsReady:      true,
+				GTIDExecuted: "uuid:1-10",
+				Replication:  &webserver.ReplicationStatus{IORunning: true, SQLRunning: true},
+			},
+			replica: {
+				InstanceName: replica,
+				Role:         webserver.RoleReplica,
+				IsReady:      true,
+				GTIDExecuted: "uuid:1-10",
+				Replication:  &webserver.ReplicationStatus{IORunning: true, SQLRunning: true},
+			},
+		},
+	}
+
+	switched, err := reconciler.reconcilePrimaryChange(ctx, cluster, plan, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !switched {
+		t.Fatal("primary change was not reconciled")
+	}
+	if got := strings.Join(control.demoted, ","); got != oldPrimary {
+		t.Fatalf("demoted = %q, want %s", got, oldPrimary)
+	}
+	if got := strings.Join(control.promoted, ","); got != newPrimary {
+		t.Fatalf("promoted = %q, want %s", got, newPrimary)
+	}
+	source, ok := control.configured[oldPrimary]
+	if !ok {
+		t.Fatalf("old primary was not configured as replica: %#v", control.configured)
+	}
+	if source.Host != "demo-2.default.svc" || source.User != replicationUser || !source.AutoPosition || !source.SSL {
+		t.Fatalf("source = %#v", source)
+	}
+	if _, configuredTarget := control.configured[newPrimary]; configuredTarget {
+		t.Fatalf("promoted target must not be configured as its own replica")
+	}
+
+	gotCluster := &mysqlv1alpha1.Cluster{}
+	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}, gotCluster); err != nil {
+		t.Fatal(err)
+	}
+	if gotCluster.Status.CurrentPrimary != newPrimary || gotCluster.Status.TargetPrimary != newPrimary {
+		t.Fatalf("primary status = current %q target %q", gotCluster.Status.CurrentPrimary, gotCluster.Status.TargetPrimary)
+	}
+	gotPod1 := &corev1.Pod{}
+	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: oldPrimary}, gotPod1); err != nil {
+		t.Fatal(err)
+	}
+	gotPod2 := &corev1.Pod{}
+	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: newPrimary}, gotPod2); err != nil {
+		t.Fatal(err)
+	}
+	if gotPod1.Labels[roleLabel] != roleReplica || gotPod2.Labels[roleLabel] != rolePrimary {
+		t.Fatalf("role labels: demo-1=%q demo-2=%q", gotPod1.Labels[roleLabel], gotPod2.Labels[roleLabel])
+	}
+}
+
+func TestReconcileReplicaSourcesRepairsReplicaFollowingOldPrimary(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cluster := baseCluster()
+	control := &recordingControlClient{}
+	observed := observedCluster{
+		PrimaryName:   "demo-2",
+		InstanceNames: []string{"demo-1", "demo-2", "demo-3"},
+		StatusByInstance: map[string]*webserver.Status{
+			"demo-1": {
+				InstanceName: "demo-1",
+				Role:         webserver.RoleReplica,
+				IsReady:      true,
+				Replication:  &webserver.ReplicationStatus{SourceHost: "demo-2.default.svc", IORunning: true, SQLRunning: true},
+			},
+			"demo-2": {InstanceName: "demo-2", Role: webserver.RolePrimary, IsReady: true},
+			"demo-3": {
+				InstanceName: "demo-3",
+				Role:         webserver.RoleReplica,
+				IsReady:      true,
+				Replication:  &webserver.ReplicationStatus{SourceHost: "demo-1.default.svc", IORunning: true, SQLRunning: true},
+			},
+		},
+	}
+	reconciler := &ClusterReconciler{ControlClient: control}
+
+	repaired, err := reconciler.reconcileReplicaSources(ctx, cluster, testPlan(), observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !repaired {
+		t.Fatal("replica source repair was not reported")
+	}
+	if _, ok := control.configured["demo-1"]; ok {
+		t.Fatalf("replica already following current primary should not be reconfigured: %#v", control.configured)
+	}
+	source, ok := control.configured["demo-3"]
+	if !ok {
+		t.Fatalf("replica following old primary was not repaired: %#v", control.configured)
+	}
+	if source.Host != "demo-2.default.svc" {
+		t.Fatalf("source host = %q, want demo-2.default.svc", source.Host)
 	}
 }
 
@@ -527,6 +763,24 @@ func testPlan() clusterPlan {
 		RWServiceName:     "demo-rw",
 		ROServiceName:     "demo-ro",
 		RServiceName:      "demo-r",
+	}
+}
+
+func readyPod(cluster *mysqlv1alpha1.Cluster, name, role string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: cluster.Namespace,
+			Labels: map[string]string{
+				clusterLabel:  cluster.Name,
+				instanceLabel: name,
+				roleLabel:     role,
+			},
+		},
+		Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{
+			Type:   corev1.PodReady,
+			Status: corev1.ConditionTrue,
+		}}},
 	}
 }
 

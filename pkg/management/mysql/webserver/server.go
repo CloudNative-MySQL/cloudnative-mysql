@@ -25,6 +25,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+
+	"github.com/yyewolf/cnmysql/pkg/management/mysql/replication"
 )
 
 // InstanceController is the behaviour the HTTP layer drives. It is implemented
@@ -42,6 +44,9 @@ type InstanceController interface {
 	Promote(ctx context.Context) error
 	// Demote transitions a primary to replica (read-only).
 	Demote(ctx context.Context) error
+	// EnsureReplicaConfigured points the instance at a source and starts
+	// replication.
+	EnsureReplicaConfigured(ctx context.Context, opts replication.SourceOptions) error
 	// Restart restarts the managed mysqld process.
 	Restart(ctx context.Context) error
 }
@@ -63,11 +68,32 @@ func Handler(controller InstanceController) http.Handler {
 	mux.HandleFunc("GET /status", statusHandler(controller))
 	mux.HandleFunc("POST /promote", actionHandler(controller.Promote))
 	mux.HandleFunc("POST /demote", actionHandler(controller.Demote))
+	mux.HandleFunc("POST /replica/source", configureReplicaHandler(controller))
 	mux.HandleFunc("POST /restart", actionHandler(controller.Restart))
 	if streamer, ok := controller.(BackupStreamer); ok {
 		mux.HandleFunc("GET /cluster/backup", backupHandler(streamer))
 	}
 	return mux
+}
+
+// ConfigureReplicaRequest is the JSON body accepted by POST /replica/source.
+type ConfigureReplicaRequest struct {
+	Source replication.SourceOptions `json:"source"`
+}
+
+func configureReplicaHandler(controller InstanceController) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req ConfigureReplicaRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := controller.EnsureReplicaConfigured(r.Context(), req.Source); err != nil {
+			writeError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}
 }
 
 // backupHandler streams an xbstream physical backup. Because the body is sent

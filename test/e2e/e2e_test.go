@@ -315,9 +315,61 @@ var _ = Describe("Manager", Ordered, func() {
 			output, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(output).To(Equal("cluster-sample-1"), "rw must route only to the primary")
+
+			By("requesting a planned switchover to a replica")
+			requestSwitchover("cluster-sample", "cluster-sample-2")
+
+			By("waiting for the promoted replica to become the current primary")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "cluster", "cluster-sample",
+					"-o", "jsonpath={.status.currentPrimary}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("cluster-sample-2"))
+			}, 5*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("verifying rw routes only to the promoted primary")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "endpointslice",
+					"-l", "kubernetes.io/service-name=cluster-sample-rw",
+					"-o", "jsonpath={.items[*].endpoints[*].targetRef.name}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("cluster-sample-2"))
+			}, 5*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("verifying writes on the promoted primary replicate to the old primary")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "exec", "cluster-sample-2", "--",
+					"mysql", "-uapp", "-p"+password, "app", "-e", "REPLACE INTO e2e VALUES (43);")
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred(), "Promoted primary is not writable yet")
+			}, 5*time.Minute, 5*time.Second).Should(Succeed())
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "exec", "cluster-sample-1", "--",
+					"mysql", "-uapp", "-p"+password, "-e", "SELECT id FROM app.e2e WHERE id = 43;")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("43"))
+			}, 3*time.Minute, 5*time.Second).Should(Succeed())
 		})
 	})
 })
+
+func requestSwitchover(clusterName, targetPrimary string) {
+	payload := fmt.Sprintf(
+		`{"status":{"targetPrimary":%q,"targetPrimaryTimestamp":%q,"phase":"Switchover","phaseReason":"Switching over to %s"}}`,
+		targetPrimary,
+		time.Now().UTC().Format(time.RFC3339),
+		targetPrimary,
+	)
+	cmd := exec.Command("kubectl", "patch", "cluster", clusterName,
+		"--subresource=status",
+		"--type=merge",
+		"-p", payload)
+	_, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to request switchover")
+}
 
 func applicationPassword() string {
 	cmd := exec.Command("kubectl", "get", "secret", "cluster-sample-app",
