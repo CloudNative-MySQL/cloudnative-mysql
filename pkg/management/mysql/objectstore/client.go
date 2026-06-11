@@ -28,6 +28,8 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+
+	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
 )
 
 // Environment variables consumed by NewClientFromEnv. The backup/recovery
@@ -79,6 +81,24 @@ func ConfigFromEnv() Config {
 	return cfg
 }
 
+// ConfigFromStore maps an API object store plus already-resolved credential
+// values into a client Config. It mirrors the env the pods receive, so the
+// operator's own object-store access matches the workers'.
+func ConfigFromStore(store mysqlv1alpha1.S3ObjectStore, accessKeyID, secretAccessKey, sessionToken string) Config {
+	cfg := Config{
+		Endpoint:        store.Endpoint,
+		Region:          store.Region,
+		AccessKeyID:     accessKeyID,
+		SecretAccessKey: secretAccessKey,
+		SessionToken:    sessionToken,
+		SignatureV2:     store.SignatureVersion == mysqlv1alpha1.SignatureVersionV2,
+	}
+	if store.ForcePathStyle != nil {
+		cfg.ForcePathStyle = *store.ForcePathStyle
+	}
+	return cfg
+}
+
 // Client is a thin wrapper over the S3 SDK exposing the operations the
 // backup/recovery workers need.
 type Client struct {
@@ -107,10 +127,17 @@ func NewClient(cfg Config) (*Client, error) {
 		lookup = minio.BucketLookupPath
 	}
 
+	// Default the signing region so SigV4 works against S3-compatible stores
+	// (e.g. MinIO) where users routinely leave the region unset.
+	region := cfg.Region
+	if region == "" {
+		region = "us-east-1"
+	}
+
 	mc, err := minio.New(endpoint, &minio.Options{
 		Creds:        creds,
 		Secure:       secure,
-		Region:       cfg.Region,
+		Region:       region,
 		BucketLookup: lookup,
 	})
 	if err != nil {
@@ -169,6 +196,26 @@ func (c *Client) Download(ctx context.Context, bucket, key string, writer io.Wri
 		return n, fmt.Errorf("downloading s3://%s/%s: %w", bucket, key, err)
 	}
 	return n, nil
+}
+
+// IsEmptyPrefix reports whether no objects exist under bucket/prefix. It is used
+// by the operator's empty-archive safety check, so a fresh cluster never adopts
+// (and overwrites) a destination that already holds another cluster's backups.
+func (c *Client) IsEmptyPrefix(ctx context.Context, bucket, prefix string) (bool, error) {
+	objects := c.mc.ListObjects(ctx, bucket, minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: true,
+		MaxKeys:   1,
+	})
+	object, ok := <-objects
+	if !ok {
+		// Channel closed without yielding anything: nothing under the prefix.
+		return true, nil
+	}
+	if object.Err != nil {
+		return false, fmt.Errorf("listing s3://%s/%s: %w", bucket, prefix, object.Err)
+	}
+	return false, nil
 }
 
 // GetJSON downloads bucket/key and unmarshals it into v.

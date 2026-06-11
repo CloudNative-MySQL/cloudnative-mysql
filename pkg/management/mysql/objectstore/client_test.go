@@ -17,6 +17,9 @@ limitations under the License.
 package objectstore
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -115,5 +118,57 @@ func TestSHA256Reader(t *testing.T) {
 	}
 	if got := reader.SumHex(); got != "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9" {
 		t.Fatalf("sha256 = %q", got)
+	}
+}
+
+func TestIsEmptyPrefix(t *testing.T) {
+	t.Parallel()
+
+	const nonEmptyBody = `<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Name>backups</Name><Prefix>demo/</Prefix><KeyCount>1</KeyCount>
+  <MaxKeys>1</MaxKeys><IsTruncated>false</IsTruncated>
+  <Contents><Key>demo/backup-1/id/backup.xbstream</Key><Size>42</Size></Contents>
+</ListBucketResult>`
+	const emptyBody = `<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Name>backups</Name><Prefix>demo/</Prefix><KeyCount>0</KeyCount>
+  <MaxKeys>1</MaxKeys><IsTruncated>false</IsTruncated>
+</ListBucketResult>`
+
+	cases := map[string]struct {
+		body      string
+		wantEmpty bool
+	}{
+		"non-empty": {body: nonEmptyBody, wantEmpty: false},
+		"empty":     {body: emptyBody, wantEmpty: true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			client, err := NewClient(Config{
+				Endpoint:        server.URL,
+				Region:          "us-east-1",
+				AccessKeyID:     "key",
+				SecretAccessKey: "secret",
+				ForcePathStyle:  true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			empty, err := client.IsEmptyPrefix(context.Background(), "backups", "demo/")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if empty != tc.wantEmpty {
+				t.Fatalf("IsEmptyPrefix = %t, want %t", empty, tc.wantEmpty)
+			}
+		})
 	}
 }

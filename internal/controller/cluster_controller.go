@@ -175,6 +175,30 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		})
 	}
 
+	// Guard against a fresh cluster adopting (and overwriting) an object-store
+	// destination that already holds another cluster's backups. Block before any
+	// instance is provisioned so the primary never archives over existing data.
+	if check := r.checkBackupDestination(ctx, cluster); check.Retry != nil {
+		log.Info("Could not verify backup destination, will retry", "error", check.Retry.Error())
+		return ctrl.Result{RequeueAfter: provisioningRequeue}, r.patchStatus(ctx, cluster, observedCluster{
+			Phase:       phaseProvisioning,
+			PhaseReason: "Verifying backup destination is empty",
+			Ready:       false,
+			Progressing: true,
+			Plan:        plan,
+		})
+	} else if check.Blocked != "" {
+		log.Info("Blocking cluster: backup destination is not empty", "reason", check.Blocked)
+		r.Recorder.Event(cluster, corev1.EventTypeWarning, "BackupDestinationNotEmpty", check.Blocked)
+		return ctrl.Result{RequeueAfter: readyResync}, r.patchStatus(ctx, cluster, observedCluster{
+			Phase:       phaseBlocked,
+			PhaseReason: check.Blocked,
+			Ready:       false,
+			Progressing: false,
+			Plan:        plan,
+		})
+	}
+
 	// Remove replicas above the desired count (highest ordinal first), then
 	// provision instances in order, ramping up one replica at a time.
 	if err := r.scaleDownReplicas(ctx, cluster, plan); err != nil {

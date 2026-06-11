@@ -64,6 +64,17 @@ func BuildBackupKeys(store mysqlv1alpha1.S3ObjectStore, clusterName, backupName,
 	}, nil
 }
 
+// ClusterPrefix returns the object-store key prefix under which a cluster's
+// backups live. The trailing slash keeps it from matching sibling clusters
+// whose names share this one as a prefix (e.g. "demo" vs "demo-staging").
+func ClusterPrefix(store mysqlv1alpha1.S3ObjectStore, clusterName string) string {
+	prefix := cleanPath(store.Path)
+	if prefix != "" {
+		return prefix + "/" + clusterName + "/"
+	}
+	return clusterName + "/"
+}
+
 func cleanPath(path string) string {
 	parts := strings.FieldsFunc(path, func(r rune) bool {
 		return r == '/'

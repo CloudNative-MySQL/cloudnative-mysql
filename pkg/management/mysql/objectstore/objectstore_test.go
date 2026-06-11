@@ -45,6 +45,26 @@ func TestBuildBackupKeys(t *testing.T) {
 	}
 }
 
+func TestClusterPrefix(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		path    string
+		cluster string
+		want    string
+	}{
+		{path: "/cnmysql//prod/", cluster: "demo", want: "cnmysql/prod/demo/"},
+		{path: "", cluster: "demo", want: "demo/"},
+		{path: "backups", cluster: "demo", want: "backups/demo/"},
+	}
+	for _, tc := range cases {
+		got := ClusterPrefix(mysqlv1alpha1.S3ObjectStore{Path: tc.path}, tc.cluster)
+		if got != tc.want {
+			t.Fatalf("ClusterPrefix(%q, %q) = %q, want %q", tc.path, tc.cluster, got, tc.want)
+		}
+	}
+}
+
 func TestBuildBackupKeysRequiresFields(t *testing.T) {
 	t.Parallel()
 
