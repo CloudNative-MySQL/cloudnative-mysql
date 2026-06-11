@@ -119,6 +119,52 @@ func TestSelectFailoverCandidateSkipsUnhealthyReplicas(t *testing.T) {
 	}
 }
 
+func TestSelectFailoverCandidateAllowsStoppedIOThread(t *testing.T) {
+	t.Parallel()
+	replica2 := healthyReplicaStatus(testReplica2, testGTID)
+	replica2.IsReady = false
+	replica2.Replication.IORunning = false
+	replica2.Replication.LastError = "connecting to source failed"
+	replica3 := healthyReplicaStatus(testReplica3, testGTID)
+	replica3.IsReady = false
+	replica3.Replication.IORunning = false
+	replica3.Replication.LastError = "connecting to source failed"
+	observed := observedCluster{
+		PrimaryName:   testPrimary,
+		InstanceNames: []string{testPrimary, testReplica2, testReplica3},
+		GTIDByInstance: map[string]string{
+			testReplica2: testGTID,
+			testReplica3: testGTID,
+		},
+		StatusByInstance: map[string]*webserver.Status{
+			testReplica2: replica2,
+			testReplica3: replica3,
+		},
+	}
+
+	got, reason := selectFailoverCandidate(observed)
+	if got != testReplica2 {
+		t.Fatalf("candidate = %q (reason %q), want demo-2", got, reason)
+	}
+}
+
+func TestSelectFailoverCandidateSkipsReplicasWithoutGTID(t *testing.T) {
+	t.Parallel()
+	observed := observedCluster{
+		PrimaryName:    testPrimary,
+		InstanceNames:  []string{testPrimary, testReplica2},
+		GTIDByInstance: map[string]string{},
+		StatusByInstance: map[string]*webserver.Status{
+			testReplica2: healthyReplicaStatus(testReplica2, ""),
+		},
+	}
+
+	got, reason := selectFailoverCandidate(observed)
+	if got != "" {
+		t.Fatalf("candidate = %q (reason %q), want empty without GTID status", got, reason)
+	}
+}
+
 func TestDetectDivergedReplicasFlagsErrantTransactions(t *testing.T) {
 	t.Parallel()
 	observed := observedCluster{

@@ -7,7 +7,7 @@ metadata:
   name: cluster-sample
 spec:
   instances: 3
-  imageName: cnmysql-instance:8.0
+  imageName: cnmysql-instance:8.4
   storage:
     size: 10Gi
   mysql:

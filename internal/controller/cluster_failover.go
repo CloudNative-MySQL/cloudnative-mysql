@@ -106,10 +106,12 @@ func (r *ClusterReconciler) reconcileFailover(
 	return true, ctrl.Result{RequeueAfter: provisioningRequeue}, nil
 }
 
-// selectFailoverCandidate picks the safest replica to promote: a ready replica
-// with healthy SQL apply and no last error whose executed GTID set contains
-// every other candidate's. Ties (equal GTID) break to the lowest ordinal. When
-// no replica dominates all others the sets are incomparable and failover is
+// selectFailoverCandidate picks the safest reachable replica to promote: it
+// must still have SQL apply running, and its executed GTID set must contain
+// every other candidate's. During a real primary outage the replica IO thread
+// is expected to stop because the source vanished, so failover must not require
+// IORunning or instance readiness. Ties (equal GTID) break to the lowest ordinal.
+// When no replica dominates all others the sets are incomparable and failover is
 // blocked rather than risking data loss.
 func selectFailoverCandidate(observed observedCluster) (string, string) {
 	var candidates []string
@@ -118,10 +120,13 @@ func selectFailoverCandidate(observed observedCluster) (string, string) {
 			continue
 		}
 		status, ok := observed.StatusByInstance[name]
-		if !ok || !status.IsReady || status.Role != webserver.RoleReplica {
+		if !ok || status.Role != webserver.RoleReplica {
 			continue
 		}
-		if status.Replication == nil || !status.Replication.SQLRunning || status.Replication.LastError != "" {
+		if status.Replication == nil || !status.Replication.SQLRunning {
+			continue
+		}
+		if observed.GTIDByInstance[name] == "" {
 			continue
 		}
 		candidates = append(candidates, name)
