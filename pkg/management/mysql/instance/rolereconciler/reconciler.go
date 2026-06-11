@@ -112,7 +112,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result
 		// received transactions. For a switchover the old primary is read-only and
 		// this converges; for a failover the source is gone and the relay drains.
 		if !amPrimary && !caughtUp(status) {
-			log.Info("waiting to catch up before promotion", "instance", me)
+			log.Info("Waiting to catch up before promotion", "instance", me)
 			return ctrl.Result{RequeueAfter: waitRequeue}, nil
 		}
 		// Promote: stop/reset any replication and clear read-only. Idempotent on a
@@ -120,7 +120,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result
 		if err := r.Local.Promote(ctx); err != nil {
 			return ctrl.Result{}, err
 		}
-		log.Info("ensured self is the writable primary", "instance", me)
+		log.Info("Ensured self is the writable primary", "instance", me)
 		return ctrl.Result{RequeueAfter: waitRequeue}, r.setCurrentPrimary(ctx, me)
 	}
 
@@ -130,7 +130,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result
 		if amPrimary {
 			_ = r.Local.Demote(ctx)
 		}
-		log.Info("instance is diverged; staying read-only, not following", "instance", me)
+		log.Info("Instance is diverged; staying read-only, not following", "instance", me)
 		return ctrl.Result{RequeueAfter: steadyRequeue}, nil
 	}
 
@@ -151,13 +151,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result
 		// Former primary: demote then follow live. If live demotion fails, fall
 		// back to a restart so the Pod comes back clean as a replica.
 		if err := r.Local.Demote(ctx); err != nil {
-			log.Error(err, "live demotion failed; requesting shutdown to rejoin clean", "instance", me)
+			log.Error(err, "Live demotion failed; requesting shutdown to rejoin clean", "instance", me)
 			return ctrl.Result{}, r.Local.Shutdown(ctx)
 		}
 	}
 	if err := r.Local.EnsureReplicaConfigured(ctx, source); err != nil {
 		if amPrimary {
-			log.Error(err, "configuring replication failed; requesting shutdown to rejoin clean", "instance", me)
+			log.Error(err, "Configuring replication failed; requesting shutdown to rejoin clean", "instance", me)
 			return ctrl.Result{}, r.Local.Shutdown(ctx)
 		}
 		return ctrl.Result{}, err

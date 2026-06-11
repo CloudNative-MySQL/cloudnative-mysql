@@ -27,6 +27,8 @@ import (
 	"syscall"
 	"time"
 
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/instance/rolereconciler"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/pool"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/replication"
@@ -98,6 +100,17 @@ func (o *RunOptions) applyDefaults() {
 // SIGTERM/SIGINT or when mysqld exits.
 func Run(ctx context.Context, opts RunOptions) error {
 	opts.applyDefaults()
+	log := logf.FromContext(ctx).WithName("instance-runner").WithValues(
+		"instance", opts.InstanceName,
+		"version", opts.Version,
+	)
+	log.Info("Starting instance manager",
+		"dataDir", opts.DataDir,
+		"socket", opts.Socket,
+		"controlAddr", opts.WebserverAddr,
+		"healthAddr", opts.HealthAddr,
+		"cluster", opts.ClusterName,
+		"namespace", opts.Namespace)
 
 	ver, err := version.Parse(opts.Version)
 	if err != nil {
@@ -126,7 +139,11 @@ func Run(ctx context.Context, opts RunOptions) error {
 		}
 	}
 
-	sup := NewProcessSupervisor(opts.MysqldPath, args, WithShutdownTimeout(opts.ShutdownTimeout))
+	mysqldOut, mysqldErr := newProcessLogWriters(log.WithName("mysqld"))
+	sup := NewProcessSupervisor(opts.MysqldPath, args,
+		WithShutdownTimeout(opts.ShutdownTimeout),
+		WithOutput(mysqldOut, mysqldErr))
+	log.Info("Starting mysqld", "binary", opts.MysqldPath)
 	if err := sup.Start(ctx); err != nil {
 		return err
 	}
@@ -143,6 +160,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 		_ = sup.Shutdown(ctx)
 		return err
 	}
+	log.Info("Connected to mysqld control interface")
 	defer func() { _ = db.Close() }()
 
 	controller, err := NewController(opts.InstanceName, db, opts.Version, opts.Role, sup)
@@ -155,6 +173,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 	// Otherwise fall back to the static --role/--source bootstrap.
 	roleManaged := opts.ClusterName != "" && opts.Namespace != ""
 	if roleManaged {
+		log.Info("Resuming configured replication if needed")
 		if err := controller.EnsureReplicaStarted(ctx); err != nil {
 			_ = sup.Shutdown(ctx)
 			return err
@@ -164,11 +183,13 @@ func Run(ctx context.Context, opts RunOptions) error {
 			_ = sup.Shutdown(ctx)
 			return errors.New("replica source is required when role is replica")
 		}
+		log.Info("Configuring static replica source", "sourceHost", opts.Source.Host, "sourcePort", opts.Source.Port)
 		if err := controller.EnsureReplicaConfigured(ctx, *opts.Source); err != nil {
 			_ = sup.Shutdown(ctx)
 			return err
 		}
 	} else {
+		log.Info("Resuming configured replication if needed")
 		if err := controller.EnsureReplicaStarted(ctx); err != nil {
 			_ = sup.Shutdown(ctx)
 			return err
@@ -186,8 +207,10 @@ func Run(ctx context.Context, opts RunOptions) error {
 	healthSrv := buildHealthServer(opts, controller)
 
 	serverErr := make(chan error, 1)
+	log.Info("Starting control API server", "addr", opts.WebserverAddr, "tls", opts.TLS.ServerCertFile != "")
 	go func() { serverErr <- serve(srv, opts.TLS) }()
 	healthErr := make(chan error, 1)
+	log.Info("Starting health API server", "addr", opts.HealthAddr)
 	go func() { healthErr <- servePlain(healthSrv) }()
 
 	// mysqld exit signals the supervisor's wait channel.
@@ -200,6 +223,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 	mgrCtx, cancelMgr := context.WithCancel(ctx)
 	defer cancelMgr()
 	if roleManaged {
+		log.Info("Starting role reconciler")
 		go func() {
 			roleErr <- rolereconciler.Start(mgrCtx, rolereconciler.StartOptions{
 				Namespace:      opts.Namespace,
@@ -214,18 +238,24 @@ func Run(ctx context.Context, opts RunOptions) error {
 	var runErr error
 	select {
 	case sig := <-signals:
+		log.Info("Received signal", "signal", sig.String())
 		runErr = fmt.Errorf("received signal %s", sig)
 	case err := <-mysqldExit:
+		log.Error(err, "Mysqld exited")
 		runErr = fmt.Errorf("mysqld exited: %w", err)
 	case err := <-serverErr:
+		log.Error(err, "Control API server failed")
 		runErr = fmt.Errorf("control API server failed: %w", err)
 	case err := <-healthErr:
+		log.Error(err, "Health API server failed")
 		runErr = fmt.Errorf("health API server failed: %w", err)
 	case err := <-roleErr:
+		log.Error(err, "Role reconciler failed")
 		runErr = fmt.Errorf("role reconciler failed: %w", err)
 	}
 	cancelMgr()
 
+	log.Info("Shutting down instance manager")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), opts.ShutdownTimeout)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)

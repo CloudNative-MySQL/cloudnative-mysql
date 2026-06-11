@@ -20,20 +20,24 @@ limitations under the License.
 package main
 
 import (
-	"fmt"
+	"context"
 	"os"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/yyewolf/cnmysql/internal/cmd/manager"
 )
 
 func main() {
-	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
+	ctrl.SetLogger(zap.New(zap.UseDevMode(false)))
+	setupLog := ctrl.Log.WithName("setup")
 
-	if err := manager.NewRootCommand().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "manager: error:", err)
+	cmd := manager.NewRootCommand()
+	cmd.SetContext(logf.IntoContext(context.Background(), ctrl.Log.WithName("instance-manager")))
+	if err := cmd.Execute(); err != nil {
+		setupLog.Error(err, "Command failed")
 		os.Exit(1)
 	}
 }

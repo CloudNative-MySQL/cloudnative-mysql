@@ -23,6 +23,8 @@ import (
 	"os"
 	"os/exec"
 
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/xtrabackup"
 )
 
@@ -88,7 +90,10 @@ func (c *Controller) BackupStream(ctx context.Context, w io.Writer) error {
 
 	cmd := exec.CommandContext(ctx, c.backup.XtrabackupPath, args...)
 	cmd.Stdout = w
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = newProcessLogWriter(logf.FromContext(ctx).WithName("xtrabackup").WithValues(
+		"instance", c.name,
+		"dataDir", c.backup.DataDir,
+	), "stderr")
 	if err := cmd.Run(); err != nil {
 		return err
 	}

@@ -26,6 +26,8 @@ import (
 	"os/exec"
 	"time"
 
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/xtrabackup"
 )
 
@@ -69,6 +71,13 @@ func (o *FetchOptions) applyDefaults() {
 // BackupDir, leaving it ready for Join to prepare and restore.
 func FetchBackup(ctx context.Context, opts FetchOptions) error {
 	opts.applyDefaults()
+	log := logf.FromContext(ctx).WithName("instance-fetch-backup").WithValues(
+		"sourceURL", opts.SourceURL,
+		"backupDir", opts.BackupDir,
+		"serverName", opts.ServerName,
+		"compressed", opts.Compress,
+	)
+	log.Info("Starting backup fetch")
 	if opts.SourceURL == "" || opts.BackupDir == "" {
 		return fmt.Errorf("fetch: source URL and backup dir are required")
 	}
@@ -91,6 +100,7 @@ func FetchBackup(ctx context.Context, opts FetchOptions) error {
 		return fmt.Errorf("requesting backup stream: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	log.Info("Received backup stream response", "status", resp.Status)
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("backup stream returned %s", resp.Status)
 	}
@@ -102,8 +112,10 @@ func FetchBackup(ctx context.Context, opts FetchOptions) error {
 	}
 	extract := exec.CommandContext(ctx, opts.XBStreamPath, extractArgs...)
 	extract.Stdin = resp.Body
-	extract.Stdout = os.Stdout
-	extract.Stderr = os.Stderr
+	extractOut, extractErr := newProcessLogWriters(log.WithName("xbstream"))
+	extract.Stdout = extractOut
+	extract.Stderr = extractErr
+	log.Info("Extracting backup stream", "binary", opts.XBStreamPath)
 	if err := extract.Run(); err != nil {
 		return fmt.Errorf("xbstream extract: %w", err)
 	}
@@ -114,12 +126,15 @@ func FetchBackup(ctx context.Context, opts FetchOptions) error {
 			return err
 		}
 		decompress := exec.CommandContext(ctx, opts.XtrabackupPath, decompressArgs...)
-		decompress.Stdout = os.Stdout
-		decompress.Stderr = os.Stderr
+		decompressOut, decompressErr := newProcessLogWriters(log.WithName("xtrabackup"))
+		decompress.Stdout = decompressOut
+		decompress.Stderr = decompressErr
+		log.Info("Decompressing backup", "binary", opts.XtrabackupPath)
 		if err := decompress.Run(); err != nil {
 			return fmt.Errorf("xtrabackup decompress: %w", err)
 		}
 	}
+	log.Info("Completed backup fetch")
 	return nil
 }
 

@@ -24,6 +24,8 @@ import (
 	"path/filepath"
 	"time"
 
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/replication"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/version"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/xtrabackup"
@@ -80,8 +82,17 @@ func (o *JoinOptions) applyDefaults() {
 // a no-op if the data directory is already initialised.
 func Join(ctx context.Context, opts JoinOptions) error {
 	opts.applyDefaults()
+	log := logf.FromContext(ctx).WithName("instance-join").WithValues(
+		"dataDir", opts.DataDir,
+		"backupDir", opts.BackupDir,
+		"socket", opts.Socket,
+		"version", opts.Version,
+		"sourceHost", opts.Source.Host,
+	)
+	log.Info("Starting replica join")
 
 	if IsInitialized(opts.DataDir) {
+		log.Info("Data directory already initialized")
 		return nil
 	}
 
@@ -95,6 +106,7 @@ func Join(ctx context.Context, opts JoinOptions) error {
 	if err != nil {
 		return err
 	}
+	log.Info("Preparing backup")
 	if err := runCommand(ctx, opts.XtrabackupPath, prepareArgs); err != nil {
 		return fmt.Errorf("xtrabackup prepare: %w", err)
 	}
@@ -107,6 +119,7 @@ func Join(ctx context.Context, opts JoinOptions) error {
 	if err != nil {
 		return err
 	}
+	log.Info("Restoring backup")
 	if err := runCommand(ctx, opts.XtrabackupPath, copyBackArgs); err != nil {
 		return fmt.Errorf("xtrabackup copy-back: %w", err)
 	}
@@ -116,15 +129,21 @@ func Join(ctx context.Context, opts JoinOptions) error {
 	if err != nil {
 		return err
 	}
+	log.Info("Read backup binlog info", "hasGTIDSet", binlogInfo.GTIDSet != "")
 
 	// 4. Configure replication on a temporary server so it persists in the data
 	// directory and resumes when the main server starts.
-	return opts.configureReplication(ctx, ver, binlogInfo.GTIDSet)
+	if err := opts.configureReplication(ctx, ver, binlogInfo.GTIDSet); err != nil {
+		return err
+	}
+	log.Info("Completed replica join")
+	return nil
 }
 
 // configureReplication starts a temporary socket-only server and provisions GTID
 // replication from the backup point.
 func (o *JoinOptions) configureReplication(ctx context.Context, ver version.Version, gtidPurged string) error {
+	log := logf.FromContext(ctx).WithName("instance-join")
 	args := []string{}
 	if o.ConfigFile != "" {
 		args = append(args, "--defaults-file="+o.ConfigFile)
@@ -156,7 +175,11 @@ func (o *JoinOptions) configureReplication(ctx context.Context, ver version.Vers
 		args = append(args, "--log-slave-updates")
 	}
 
-	sup := NewProcessSupervisor(o.MysqldPath, args, WithShutdownTimeout(o.ReadyTimeout))
+	stdout, stderr := newProcessLogWriters(log.WithName("temporary-mysqld"))
+	sup := NewProcessSupervisor(o.MysqldPath, args,
+		WithShutdownTimeout(o.ReadyTimeout),
+		WithOutput(stdout, stderr))
+	log.Info("Starting temporary mysqld to configure replication", "socket", o.Socket)
 	if err := sup.Start(ctx); err != nil {
 		return fmt.Errorf("starting temporary server: %w", err)
 	}
@@ -166,9 +189,11 @@ func (o *JoinOptions) configureReplication(ctx context.Context, ver version.Vers
 	if err != nil {
 		return err
 	}
+	log.Info("Connected to temporary mysqld")
 	defer func() { _ = db.Close() }()
 
 	mgr := replication.NewManager(db, ver)
+	log.Info("Provisioning replication from backup", "sourceHost", o.Source.Host)
 	return mgr.ProvisionFromBackup(ctx, gtidPurged, o.Source)
 }
 
@@ -185,7 +210,8 @@ func readBinlogInfo(backupDir string) (xtrabackup.BinlogInfo, error) {
 // runCommand runs an external command, forwarding output to the process stdio.
 func runCommand(ctx context.Context, binary string, args []string) error {
 	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	stdout, stderr := newProcessLogWriters(logf.FromContext(ctx).WithName("process").WithValues("process", binary))
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	return cmd.Run()
 }

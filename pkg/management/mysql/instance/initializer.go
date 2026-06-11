@@ -25,6 +25,8 @@ import (
 	"path/filepath"
 	"time"
 
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/pool"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/version"
 )
@@ -82,6 +84,12 @@ func IsInitialized(dataDir string) bool {
 // initialised, making it safe to run on every pod start.
 func Initialize(ctx context.Context, opts InitOptions) error {
 	opts.applyDefaults()
+	log := logf.FromContext(ctx).WithName("instance-initdb").WithValues(
+		"dataDir", opts.DataDir,
+		"socket", opts.Socket,
+		"version", opts.Version,
+	)
+	log.Info("Starting data directory initialization")
 
 	// Propagate the version into the bootstrap so its SQL dialect matches.
 	if opts.Bootstrap.MySQLVersion == "" {
@@ -98,18 +106,24 @@ func Initialize(ctx context.Context, opts InitOptions) error {
 	}
 
 	if IsInitialized(opts.DataDir) {
+		log.Info("Data directory already initialized")
 		return nil
 	}
 
 	if err := os.MkdirAll(opts.DataDir, 0o750); err != nil {
 		return fmt.Errorf("creating data dir: %w", err)
 	}
+	log.Info("Created data directory")
 
 	if err := opts.runInitialize(ctx, ver); err != nil {
 		return err
 	}
 
-	return opts.runBootstrap(ctx)
+	if err := opts.runBootstrap(ctx); err != nil {
+		return err
+	}
+	log.Info("Completed data directory initialization")
+	return nil
 }
 
 // runInitialize lays down the system tables. MySQL 5.7+ uses
@@ -124,6 +138,7 @@ func (o *InitOptions) runInitialize(ctx context.Context, ver version.Version) er
 
 // runMysqldInitialize runs `mysqld --initialize-insecure` (MySQL 5.7+).
 func (o *InitOptions) runMysqldInitialize(ctx context.Context) error {
+	logf.FromContext(ctx).WithName("instance-initdb").Info("Running mysqld initialize", "binary", o.MysqldPath)
 	args := []string{}
 	if o.ConfigFile != "" {
 		args = append(args, "--defaults-file="+o.ConfigFile)
@@ -138,6 +153,7 @@ func (o *InitOptions) runMysqldInitialize(ctx context.Context) error {
 // runMysqlInstallDB runs `mysql_install_db` (MySQL 5.6), which lays down the
 // system tables with a passwordless root.
 func (o *InitOptions) runMysqlInstallDB(ctx context.Context) error {
+	logf.FromContext(ctx).WithName("instance-initdb").Info("Running mysql install db", "binary", o.MysqlInstallDBPath)
 	args := []string{}
 	if o.ConfigFile != "" {
 		args = append(args, "--defaults-file="+o.ConfigFile)
@@ -151,8 +167,9 @@ func (o *InitOptions) runMysqlInstallDB(ctx context.Context) error {
 
 func runStdio(ctx context.Context, binary string, args []string, what string) error {
 	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	stdout, stderr := newProcessLogWriters(logf.FromContext(ctx).WithName("process").WithValues("process", what))
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%s: %w", what, err)
 	}
@@ -162,6 +179,7 @@ func runStdio(ctx context.Context, binary string, args []string, what string) er
 // runBootstrap starts a temporary socket-only server, applies the bootstrap
 // statements as the passwordless root, then shuts it down.
 func (o *InitOptions) runBootstrap(ctx context.Context) error {
+	log := logf.FromContext(ctx).WithName("instance-initdb")
 	args := []string{}
 	if o.ConfigFile != "" {
 		args = append(args, "--defaults-file="+o.ConfigFile)
@@ -172,7 +190,11 @@ func (o *InitOptions) runBootstrap(ctx context.Context) error {
 		"--skip-networking",
 	)
 
-	sup := NewProcessSupervisor(o.MysqldPath, args, WithShutdownTimeout(o.ReadyTimeout))
+	stdout, stderr := newProcessLogWriters(log.WithName("temporary-mysqld"))
+	sup := NewProcessSupervisor(o.MysqldPath, args,
+		WithShutdownTimeout(o.ReadyTimeout),
+		WithOutput(stdout, stderr))
+	log.Info("Starting temporary mysqld for bootstrap", "socket", o.Socket)
 	if err := sup.Start(ctx); err != nil {
 		return fmt.Errorf("starting temporary server: %w", err)
 	}
@@ -182,12 +204,14 @@ func (o *InitOptions) runBootstrap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	log.Info("Connected to temporary mysqld")
 	defer func() { _ = db.Close() }()
 
 	stmts, err := BootstrapStatements(o.Bootstrap)
 	if err != nil {
 		return err
 	}
+	log.Info("Applying bootstrap SQL", "statements", len(stmts))
 	for _, stmt := range stmts {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("bootstrap statement failed: %w", err)

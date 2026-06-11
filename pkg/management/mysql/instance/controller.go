@@ -28,6 +28,7 @@ import (
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/replication"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/version"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/webserver"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // Supervisor abstracts the mysqld process lifecycle so the controller can
@@ -157,31 +158,43 @@ func (c *Controller) Status(ctx context.Context) (*webserver.Status, error) {
 
 // Promote transitions a replica to primary.
 func (c *Controller) Promote(ctx context.Context) error {
+	log := logf.FromContext(ctx).WithName("instance-controller").WithValues("instance", c.name)
+	log.Info("Promoting instance")
 	if err := c.repl.Promote(ctx); err != nil {
 		return err
 	}
 	c.expected = webserver.RolePrimary
+	log.Info("Promoted instance")
 	return nil
 }
 
 // Demote makes a primary read-only.
 func (c *Controller) Demote(ctx context.Context) error {
+	logf.FromContext(ctx).WithName("instance-controller").Info("Demoting instance", "instance", c.name)
 	return c.repl.Demote(ctx)
 }
 
 // EnsureReplicaStarted resumes replication when this instance is a configured
 // replica whose threads did not auto-start with mysqld.
 func (c *Controller) EnsureReplicaStarted(ctx context.Context) error {
+	logf.FromContext(ctx).WithName("instance-controller").Info("Ensuring replication is started", "instance", c.name)
 	return c.repl.EnsureReplicaStarted(ctx)
 }
 
 // EnsureReplicaConfigured restores missing replication source metadata and
 // resumes stopped replication threads for an expected replica.
 func (c *Controller) EnsureReplicaConfigured(ctx context.Context, opts replication.SourceOptions) error {
+	logf.FromContext(ctx).WithName("instance-controller").Info("Ensuring replication source is configured",
+		"instance", c.name,
+		"sourceHost", opts.Host,
+		"sourcePort", opts.Port)
 	if err := c.repl.EnsureReplicaConfigured(ctx, opts); err != nil {
 		return err
 	}
 	c.expected = webserver.RoleReplica
+	logf.FromContext(ctx).WithName("instance-controller").Info("Configured replication source",
+		"instance", c.name,
+		"sourceHost", opts.Host)
 	return nil
 }
 
@@ -190,6 +203,7 @@ func (c *Controller) Restart(ctx context.Context) error {
 	if c.supervisor == nil {
 		return errors.New("restart is not available: no supervisor configured")
 	}
+	logf.FromContext(ctx).WithName("instance-controller").Info("Restarting mysqld", "instance", c.name)
 	return c.supervisor.Restart(ctx)
 }
 
@@ -200,6 +214,7 @@ func (c *Controller) Shutdown(ctx context.Context) error {
 	if c.supervisor == nil {
 		return errors.New("shutdown is not available: no supervisor configured")
 	}
+	logf.FromContext(ctx).WithName("instance-controller").Info("Shutting down mysqld", "instance", c.name)
 	return c.supervisor.Shutdown(ctx)
 }
 
