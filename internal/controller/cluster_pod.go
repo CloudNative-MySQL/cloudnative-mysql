@@ -43,7 +43,7 @@ func (r *ClusterReconciler) podSpec(cluster *mysqlv1alpha1.Cluster, plan cluster
 			Image:           plan.Image,
 			ImagePullPolicy: cluster.Spec.ImagePullPolicy,
 			Args:            bootstrapArgs(cluster, plan, inst),
-			Env:             initEnv(plan),
+			Env:             bootstrapEnv(plan, inst),
 			VolumeMounts:    volumeMounts(),
 			Resources:       cluster.Spec.Resources,
 			SecurityContext: cluster.Spec.SecurityContext,
@@ -94,12 +94,29 @@ func (r *ClusterReconciler) podSpec(cluster *mysqlv1alpha1.Cluster, plan cluster
 }
 
 // bootstrapArgs returns the init-container command: the primary initialises a
-// fresh data dir; a replica clones the primary over the streamed backup.
+// fresh data dir (initdb) or restores a physical backup from object storage
+// (recovery); a replica clones the primary over the streamed backup.
 func bootstrapArgs(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instancePlan) []string {
 	if inst.IsPrimary {
+		if plan.Recovery != nil {
+			return restoreArgs(plan)
+		}
 		return initdbArgs(cluster.Spec.Bootstrap.InitDB)
 	}
 	return joinArgs(cluster, plan)
+}
+
+// restoreArgs builds the recovering primary's init-container command: download
+// and restore a physical backup from object storage into the data directory.
+func restoreArgs(plan clusterPlan) []string {
+	return []string{
+		"instance", "restore",
+		"--data-dir=" + dataDir,
+		"--backup-dir=" + joinBackupDir,
+		"--bucket=" + plan.Recovery.Bucket,
+		"--archive-key=" + plan.Recovery.ArchiveKey,
+		"--metadata-key=" + plan.Recovery.MetadataKey,
+	}
 }
 
 func initdbArgs(initdb *mysqlv1alpha1.BootstrapInitDB) []string {
@@ -186,6 +203,16 @@ func runArgs(cluster *mysqlv1alpha1.Cluster, _ clusterPlan, _ instancePlan) []st
 		"--source-ssl-cert=" + serverTLSPath + "/tls.crt",
 		"--source-ssl-key=" + serverTLSPath + "/tls.key",
 	}
+}
+
+// bootstrapEnv is the init-container environment. The recovering primary also
+// gets the object-store credentials its restore worker needs.
+func bootstrapEnv(plan clusterPlan, inst instancePlan) []corev1.EnvVar {
+	env := initEnv(plan)
+	if inst.IsPrimary && plan.Recovery != nil {
+		env = append(env, plan.Recovery.StoreEnv...)
+	}
+	return env
 }
 
 // initEnv is the environment for the init container, which may run initdb (on

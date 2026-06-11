@@ -218,6 +218,99 @@ func TestBackupPrimaryTargetUsesCurrentPrimary(t *testing.T) {
 	}
 }
 
+func TestRecoveryBootstrapRestoresPrimaryFromObjectStore(t *testing.T) {
+	t.Parallel()
+
+	scheme := testScheme(t)
+	cluster := baseBackupCluster()
+	cluster.Spec.Bootstrap = &mysqlv1alpha1.BootstrapConfiguration{
+		Recovery: &mysqlv1alpha1.BootstrapRecovery{
+			Backup: &mysqlv1alpha1.LocalObjectReference{Name: "backup-sample"},
+		},
+	}
+
+	backup := baseBackup()
+	backup.Status = mysqlv1alpha1.BackupStatus{
+		Phase:    mysqlv1alpha1.BackupPhaseCompleted,
+		BackupID: "backup-sample-123",
+	}
+
+	reconciler := &ClusterReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, backup).Build(),
+		Scheme: scheme,
+	}
+
+	plan, err := reconciler.buildPlan(context.Background(), cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Recovery == nil {
+		t.Fatal("plan.Recovery should be set for a recovery bootstrap")
+	}
+	wantKey := "clusters/demo/backup-sample/backup-sample-123/backup.xbstream"
+	if plan.Recovery.Bucket != "cluster-backups" || plan.Recovery.ArchiveKey != wantKey {
+		t.Fatalf("recovery target = %s/%s", plan.Recovery.Bucket, plan.Recovery.ArchiveKey)
+	}
+
+	spec := reconciler.podSpec(cluster, plan, plan.instanceFor(cluster, 1))
+	initArgs := strings.Join(spec.InitContainers[0].Args, " ")
+	for _, want := range []string{
+		"instance restore",
+		"--bucket=cluster-backups",
+		"--archive-key=" + wantKey,
+		"--metadata-key=clusters/demo/backup-sample/backup-sample-123/metadata.json",
+	} {
+		if !strings.Contains(initArgs, want) {
+			t.Fatalf("restore init args missing %q:\n%s", want, initArgs)
+		}
+	}
+	if strings.Contains(initArgs, "instance initdb") {
+		t.Fatalf("recovery primary must not run initdb: %s", initArgs)
+	}
+
+	// The recovering primary's init container carries the object-store creds.
+	var hasEndpoint, hasAccessKey bool
+	for _, env := range spec.InitContainers[0].Env {
+		switch env.Name {
+		case "CNMYSQL_S3_ENDPOINT":
+			hasEndpoint = true
+		case "CNMYSQL_S3_ACCESS_KEY_ID":
+			hasAccessKey = true
+		}
+	}
+	if !hasEndpoint || !hasAccessKey {
+		t.Fatalf("recovery init container missing S3 env (endpoint=%t accessKey=%t)", hasEndpoint, hasAccessKey)
+	}
+
+	// A replica still clones from the primary via join, not restore.
+	replicaSpec := reconciler.podSpec(cluster, plan, plan.instanceFor(cluster, 2))
+	if got := strings.Join(replicaSpec.InitContainers[0].Args, " "); !strings.Contains(got, "instance join") {
+		t.Fatalf("replica should join the primary, got: %s", got)
+	}
+}
+
+func TestRecoveryBootstrapWaitsForCompletedBackup(t *testing.T) {
+	t.Parallel()
+
+	scheme := testScheme(t)
+	cluster := baseBackupCluster()
+	cluster.Spec.Bootstrap = &mysqlv1alpha1.BootstrapConfiguration{
+		Recovery: &mysqlv1alpha1.BootstrapRecovery{
+			Backup: &mysqlv1alpha1.LocalObjectReference{Name: "backup-sample"},
+		},
+	}
+	backup := baseBackup()
+	backup.Status.Phase = mysqlv1alpha1.BackupPhaseRunning
+
+	reconciler := &ClusterReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, backup).Build(),
+		Scheme: scheme,
+	}
+	if _, err := reconciler.buildPlan(context.Background(), cluster); err == nil {
+		t.Fatal("buildPlan should fail while the recovery backup is not completed")
+	}
+}
+
 func TestBackupFailsWithoutObjectStore(t *testing.T) {
 	t.Parallel()
 

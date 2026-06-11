@@ -424,11 +424,22 @@ func TestUnsupportedReasonNamesDeferredMilestones(t *testing.T) {
 		t.Fatalf("3-instance cluster should be supported, got %q", got)
 	}
 
+	// Recovery without a backup reference is rejected.
 	cluster = baseCluster()
 	cluster.Spec.Bootstrap.InitDB = nil
 	cluster.Spec.Bootstrap.Recovery = &mysqlv1alpha1.BootstrapRecovery{}
-	if got := unsupportedReason(cluster); !strings.Contains(got, "M6") {
-		t.Fatalf("recovery unsupported reason = %q", got)
+	if got := unsupportedReason(cluster); !strings.Contains(got, "backup reference") {
+		t.Fatalf("recovery without backup unsupported reason = %q", got)
+	}
+
+	// Recovery from a referenced backup is supported.
+	cluster = baseCluster()
+	cluster.Spec.Bootstrap.InitDB = nil
+	cluster.Spec.Bootstrap.Recovery = &mysqlv1alpha1.BootstrapRecovery{
+		Backup: &mysqlv1alpha1.LocalObjectReference{Name: "demo-backup"},
+	}
+	if got := unsupportedReason(cluster); got != "" {
+		t.Fatalf("recovery from backup should be supported, got %q", got)
 	}
 }
 
