@@ -1,0 +1,301 @@
+/*
+Copyright 2026 The CNMySQL Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
+	"github.com/yyewolf/cnmysql/pkg/management/mysql/webserver"
+)
+
+const (
+	testPrimary  = "demo-1"
+	testReplica2 = "demo-2"
+	testReplica3 = "demo-3"
+	testGTID     = "uuid:1-10"
+)
+
+func healthyReplicaStatus(name, gtid string) *webserver.Status {
+	return &webserver.Status{
+		InstanceName: name,
+		Role:         webserver.RoleReplica,
+		IsReady:      true,
+		GTIDExecuted: gtid,
+		Replication:  &webserver.ReplicationStatus{IORunning: true, SQLRunning: true},
+	}
+}
+
+func TestSelectFailoverCandidatePrefersMostCompleteThenOrdinal(t *testing.T) {
+	t.Parallel()
+	observed := observedCluster{
+		PrimaryName:   testPrimary,
+		InstanceNames: []string{testPrimary, testReplica2, testReplica3},
+		GTIDByInstance: map[string]string{
+			testReplica2: "uuid:1-8",
+			testReplica3: testGTID,
+		},
+		StatusByInstance: map[string]*webserver.Status{
+			testReplica2: healthyReplicaStatus(testReplica2, "uuid:1-8"),
+			testReplica3: healthyReplicaStatus(testReplica3, testGTID),
+		},
+	}
+	got, reason := selectFailoverCandidate(observed)
+	if got != testReplica3 {
+		t.Fatalf("candidate = %q (reason %q), want demo-3", got, reason)
+	}
+
+	// Equal GTID: lowest ordinal wins.
+	observed.GTIDByInstance[testReplica2] = testGTID
+	observed.StatusByInstance[testReplica2] = healthyReplicaStatus(testReplica2, testGTID)
+	if got, _ := selectFailoverCandidate(observed); got != testReplica2 {
+		t.Fatalf("candidate = %q, want demo-2 on equal GTID", got)
+	}
+}
+
+func TestSelectFailoverCandidateBlocksOnDivergedGTID(t *testing.T) {
+	t.Parallel()
+	observed := observedCluster{
+		PrimaryName:   testPrimary,
+		InstanceNames: []string{testPrimary, testReplica2, testReplica3},
+		GTIDByInstance: map[string]string{
+			testReplica2: "uuid:1-8",
+			testReplica3: "other:1-4",
+		},
+		StatusByInstance: map[string]*webserver.Status{
+			testReplica2: healthyReplicaStatus(testReplica2, "uuid:1-8"),
+			testReplica3: healthyReplicaStatus(testReplica3, "other:1-4"),
+		},
+	}
+	got, reason := selectFailoverCandidate(observed)
+	if got != "" {
+		t.Fatalf("candidate = %q, want empty (blocked)", got)
+	}
+	if reason == "" {
+		t.Fatal("expected a block reason")
+	}
+}
+
+func TestSelectFailoverCandidateSkipsUnhealthyReplicas(t *testing.T) {
+	t.Parallel()
+	broken := healthyReplicaStatus(testReplica2, "uuid:1-9")
+	broken.Replication.SQLRunning = false
+	observed := observedCluster{
+		PrimaryName:   testPrimary,
+		InstanceNames: []string{testPrimary, testReplica2, testReplica3},
+		GTIDByInstance: map[string]string{
+			testReplica2: "uuid:1-9",
+			testReplica3: "uuid:1-7",
+		},
+		StatusByInstance: map[string]*webserver.Status{
+			testReplica2: broken,
+			testReplica3: healthyReplicaStatus(testReplica3, "uuid:1-7"),
+		},
+	}
+	if got, _ := selectFailoverCandidate(observed); got != testReplica3 {
+		t.Fatalf("candidate = %q, want demo-3 (demo-2 has stalled SQL thread)", got)
+	}
+}
+
+func failoverCluster(t *testing.T, failoverDelay int32) (*mysqlv1alpha1.Cluster, *ClusterReconciler, *recordingControlClient) {
+	t.Helper()
+	cluster := baseCluster()
+	cluster.Spec.Instances = 3
+	cluster.Spec.FailoverDelay = failoverDelay
+	cluster.Status.CurrentPrimary = testPrimary
+	cluster.Status.TargetPrimary = testPrimary
+	cluster.Status.CurrentPrimaryTimestamp = metav1.Now().Format(time.RFC3339)
+	scheme := testScheme(t)
+	// The old primary Pod still exists (unreachable, but not yet deleted).
+	oldPod := readyPod(cluster, testPrimary, rolePrimary)
+	pod2 := readyPod(cluster, testReplica2, roleReplica)
+	pod3 := readyPod(cluster, testReplica3, roleReplica)
+	control := &recordingControlClient{}
+	reconciler := &ClusterReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&mysqlv1alpha1.Cluster{}).
+			WithObjects(cluster, oldPod, pod2, pod3).
+			Build(),
+		Scheme:        scheme,
+		ControlClient: control,
+	}
+	return cluster, reconciler, control
+}
+
+func unreachablePrimaryObserved() observedCluster {
+	plan := testPlan()
+	plan.Instances = 3
+	return observedCluster{
+		Plan:           plan,
+		PrimaryName:    testPrimary,
+		InstanceNames:  []string{testPrimary, testReplica2, testReplica3},
+		ReadyInstances: 2,
+		GTIDByInstance: map[string]string{testReplica2: testGTID, testReplica3: "uuid:1-8"},
+		StatusByInstance: map[string]*webserver.Status{
+			testReplica2: healthyReplicaStatus(testReplica2, testGTID),
+			testReplica3: healthyReplicaStatus(testReplica3, "uuid:1-8"),
+		},
+	}
+}
+
+func TestReconcileFailoverPromotesBestCandidateImmediately(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cluster, reconciler, control := failoverCluster(t, 0)
+	observed := unreachablePrimaryObserved()
+
+	handled, result, err := reconciler.reconcileFailover(ctx, cluster, observed.Plan, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled {
+		t.Fatal("failover was not handled")
+	}
+	if result.RequeueAfter == 0 {
+		t.Fatal("expected a requeue after failover")
+	}
+	if got := strings.Join(control.promoted, ","); got != testReplica2 {
+		t.Fatalf("promoted = %q, want demo-2", got)
+	}
+	if _, ok := control.configured[testReplica3]; !ok {
+		t.Fatalf("surviving replica demo-3 was not reconfigured: %#v", control.configured)
+	}
+	if _, ok := control.configured[testPrimary]; ok {
+		t.Fatal("fenced old primary must not be reconfigured")
+	}
+	// Old primary Pod is fenced (deleted).
+	gotPod := &corev1.Pod{}
+	err = reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: testPrimary}, gotPod)
+	if err == nil && gotPod.DeletionTimestamp == nil {
+		t.Fatal("old primary Pod was not fenced")
+	} else if err != nil && !apierrors.IsNotFound(err) {
+		t.Fatal(err)
+	}
+	gotCluster := &mysqlv1alpha1.Cluster{}
+	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}, gotCluster); err != nil {
+		t.Fatal(err)
+	}
+	if gotCluster.Status.CurrentPrimary != testReplica2 || gotCluster.Status.PrimaryFailingSince != "" {
+		t.Fatalf("status current=%q failingSince=%q", gotCluster.Status.CurrentPrimary, gotCluster.Status.PrimaryFailingSince)
+	}
+}
+
+func TestReconcileFailoverWaitsForFailoverDelay(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cluster, reconciler, control := failoverCluster(t, 60)
+	observed := unreachablePrimaryObserved()
+
+	handled, result, err := reconciler.reconcileFailover(ctx, cluster, observed.Plan, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled {
+		t.Fatal("failover was not handled")
+	}
+	if len(control.promoted) != 0 {
+		t.Fatalf("must not promote before failoverDelay elapses, promoted=%v", control.promoted)
+	}
+	if result.RequeueAfter <= 0 || result.RequeueAfter > 60*time.Second {
+		t.Fatalf("requeue = %s, want within failover delay", result.RequeueAfter)
+	}
+	gotCluster := &mysqlv1alpha1.Cluster{}
+	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}, gotCluster); err != nil {
+		t.Fatal(err)
+	}
+	if gotCluster.Status.PrimaryFailingSince == "" {
+		t.Fatal("primaryFailingSince was not recorded")
+	}
+	if gotCluster.Status.Phase != phaseDegraded {
+		t.Fatalf("phase = %q, want %q", gotCluster.Status.Phase, phaseDegraded)
+	}
+}
+
+func TestReconcileFailoverBlocksWithoutSafeCandidate(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cluster, reconciler, control := failoverCluster(t, 0)
+	observed := unreachablePrimaryObserved()
+	// Both replicas diverged onto incomparable GTID sets.
+	observed.GTIDByInstance[testReplica2] = testGTID
+	observed.GTIDByInstance[testReplica3] = "other:1-4"
+	observed.StatusByInstance[testReplica2] = healthyReplicaStatus(testReplica2, testGTID)
+	observed.StatusByInstance[testReplica3] = healthyReplicaStatus(testReplica3, "other:1-4")
+
+	handled, _, err := reconciler.reconcileFailover(ctx, cluster, observed.Plan, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled {
+		t.Fatal("failover was not handled")
+	}
+	if len(control.promoted) != 0 {
+		t.Fatalf("must not promote when no safe candidate exists, promoted=%v", control.promoted)
+	}
+	gotCluster := &mysqlv1alpha1.Cluster{}
+	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}, gotCluster); err != nil {
+		t.Fatal(err)
+	}
+	if gotCluster.Status.Phase != phaseBlocked {
+		t.Fatalf("phase = %q, want %q", gotCluster.Status.Phase, phaseBlocked)
+	}
+}
+
+func TestReconcileFailoverClearsMarkerWhenPrimaryHealthy(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cluster, reconciler, control := failoverCluster(t, 0)
+	cluster.Status.PrimaryFailingSince = metav1.Now().Format(time.RFC3339)
+	if err := reconciler.Status().Update(ctx, cluster); err != nil {
+		t.Fatal(err)
+	}
+	observed := unreachablePrimaryObserved()
+	observed.StatusByInstance[testPrimary] = &webserver.Status{
+		InstanceName: testPrimary,
+		Role:         webserver.RolePrimary,
+		IsReady:      true,
+		GTIDExecuted: testGTID,
+	}
+
+	handled, _, err := reconciler.reconcileFailover(ctx, cluster, observed.Plan, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handled {
+		t.Fatal("healthy primary must not trigger failover handling")
+	}
+	if len(control.promoted) != 0 {
+		t.Fatalf("healthy primary must not be failed over, promoted=%v", control.promoted)
+	}
+	gotCluster := &mysqlv1alpha1.Cluster{}
+	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}, gotCluster); err != nil {
+		t.Fatal(err)
+	}
+	if gotCluster.Status.PrimaryFailingSince != "" {
+		t.Fatalf("failing marker not cleared: %q", gotCluster.Status.PrimaryFailingSince)
+	}
+}

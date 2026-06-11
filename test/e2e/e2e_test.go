@@ -352,6 +352,47 @@ var _ = Describe("Manager", Ordered, func() {
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(ContainSubstring("43"))
 			}, 3*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("deleting the current primary Pod to trigger automatic failover")
+			cmd = exec.Command("kubectl", "delete", "pod", "cluster-sample-2", "--wait=false")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete the primary Pod")
+
+			By("waiting for a surviving replica to be promoted as the new primary")
+			var newPrimary string
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "cluster", "cluster-sample",
+					"-o", "jsonpath={.status.currentPrimary}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).NotTo(Equal("cluster-sample-2"), "primary must move off the failed instance")
+				g.Expect(output).NotTo(BeEmpty())
+				newPrimary = output
+			}, 6*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("verifying rw routes only to the failed-over primary and it accepts writes")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "endpointslice",
+					"-l", "kubernetes.io/service-name=cluster-sample-rw",
+					"-o", "jsonpath={.items[*].endpoints[*].targetRef.name}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal(newPrimary))
+
+				cmd = exec.Command("kubectl", "exec", newPrimary, "--",
+					"mysql", "-uapp", "-p"+password, "app", "-e", "REPLACE INTO e2e VALUES (44);")
+				_, err = utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred(), "failed-over primary is not writable yet")
+			}, 6*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("verifying the recovered instance rejoins and catches up as a replica")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "exec", "cluster-sample-2", "--",
+					"mysql", "-uapp", "-p"+password, "-e", "SELECT id FROM app.e2e WHERE id = 44;")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("44"))
+			}, 6*time.Minute, 5*time.Second).Should(Succeed())
 		})
 	})
 })

@@ -375,7 +375,7 @@ func TestEnsurePodDoesNotRecreateForPrimaryRoleChange(t *testing.T) {
 		Scheme: scheme,
 	}
 
-	plan.PrimaryName = "demo-2"
+	plan.PrimaryName = testReplica2
 	inst = plan.instanceFor(cluster, 1)
 	if err := reconciler.ensurePod(ctx, cluster, plan, inst); err != nil {
 		t.Fatal(err)
@@ -564,7 +564,7 @@ func TestReconcileBootstrapsSingleInstanceToReady(t *testing.T) {
 	if got.Status.Image != defaultInstanceImage {
 		t.Fatalf("status image = %q, want %q", got.Status.Image, defaultInstanceImage)
 	}
-	if got.Status.GTIDExecutedByInstance[primaryName] != "uuid:1-10" {
+	if got.Status.GTIDExecutedByInstance[primaryName] != testGTID {
 		t.Fatalf("gtid status = %#v", got.Status.GTIDExecutedByInstance)
 	}
 	ready := apimeta.FindStatusCondition(got.Status.Conditions, conditionReady)

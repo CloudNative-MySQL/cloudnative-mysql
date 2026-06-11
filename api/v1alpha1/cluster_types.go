@@ -567,6 +567,12 @@ type ClusterStatus struct {
 	// +optional
 	CurrentPrimaryTimestamp string `json:"currentPrimaryTimestamp,omitempty"`
 
+	// PrimaryFailingSince records when the current primary first became
+	// unreachable. It is used to enforce spec.failoverDelay before an automatic
+	// failover, and is cleared once the primary is healthy again.
+	// +optional
+	PrimaryFailingSince string `json:"primaryFailingSince,omitempty"`
+
 	// LatestGeneratedNode is the serial of the latest generated instance.
 	// +optional
 	LatestGeneratedNode int `json:"latestGeneratedNode,omitempty"`

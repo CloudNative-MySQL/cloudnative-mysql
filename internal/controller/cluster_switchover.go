@@ -131,10 +131,21 @@ func validateSwitchoverTarget(observed observedCluster, target string) error {
 	return nil
 }
 
+// validateTargetGTID ensures the promotion target has applied everything the
+// old primary had. The target is safe once its executed GTID set contains the
+// primary's; a strict equality check would needlessly wait while harmless
+// interval coalescing differs.
 func validateTargetGTID(observed observedCluster, currentPrimary, target string) error {
 	primaryGTID := observed.GTIDByInstance[currentPrimary]
 	targetGTID := observed.GTIDByInstance[target]
-	if primaryGTID == "" || targetGTID == "" || primaryGTID == targetGTID {
+	if primaryGTID == "" || targetGTID == "" {
+		return nil
+	}
+	contains, err := replication.GTIDContains(targetGTID, primaryGTID)
+	if err != nil {
+		return fmt.Errorf("comparing gtid sets of %s and %s: %w", target, currentPrimary, err)
+	}
+	if contains {
 		return nil
 	}
 	return fmt.Errorf("waiting for target primary %s to catch up to %s", target, currentPrimary)

@@ -1,0 +1,242 @@
+/*
+Copyright 2026 The CNMySQL Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
+	"github.com/yyewolf/cnmysql/pkg/management/mysql/replication"
+	"github.com/yyewolf/cnmysql/pkg/management/mysql/webserver"
+)
+
+// primaryHealthy reports whether the expected primary is reachable, ready and
+// still acting as the primary.
+func primaryHealthy(observed observedCluster) bool {
+	status, ok := observed.StatusByInstance[observed.PrimaryName]
+	if !ok {
+		return false
+	}
+	return status.IsReady && status.Role == webserver.RolePrimary
+}
+
+// reconcileFailover promotes a safe replica when the current primary is
+// unreachable for longer than spec.failoverDelay. It returns handled=true when
+// it took ownership of this reconcile (caller should return the given Result).
+func (r *ClusterReconciler) reconcileFailover(
+	ctx context.Context,
+	cluster *mysqlv1alpha1.Cluster,
+	plan clusterPlan,
+	observed observedCluster,
+) (bool, ctrl.Result, error) {
+	// Only an already-established primary can be failed over; never during the
+	// initial bootstrap, and never for a single-instance cluster (no candidate).
+	if cluster.Status.CurrentPrimary == "" || observed.PrimaryName == "" || plan.Instances < 2 {
+		return false, ctrl.Result{}, nil
+	}
+	if primaryHealthy(observed) {
+		if cluster.Status.PrimaryFailingSince != "" {
+			return false, ctrl.Result{}, r.updateStatus(ctx, cluster, func(s *mysqlv1alpha1.ClusterStatus) {
+				s.PrimaryFailingSince = ""
+			})
+		}
+		return false, ctrl.Result{}, nil
+	}
+
+	// The primary is unreachable: remember when it first failed so failoverDelay
+	// can be honoured across reconciles.
+	failingSince, err := r.recordPrimaryFailing(ctx, cluster)
+	if err != nil {
+		return true, ctrl.Result{}, err
+	}
+	delay := time.Duration(cluster.Spec.FailoverDelay) * time.Second
+	if remaining := delay - time.Since(failingSince); remaining > 0 {
+		reason := fmt.Sprintf("Primary %s unreachable; waiting %s before failover", observed.PrimaryName, remaining.Round(time.Second))
+		return true, ctrl.Result{RequeueAfter: remaining}, r.patchOperationPhase(ctx, cluster, observed, phaseDegraded, reason, false)
+	}
+
+	candidate, reason := selectFailoverCandidate(observed)
+	if candidate == "" {
+		blockReason := fmt.Sprintf("Cannot fail over from %s: %s", observed.PrimaryName, reason)
+		return true, ctrl.Result{RequeueAfter: readyResync}, r.patchOperationPhase(ctx, cluster, observed, phaseBlocked, blockReason, false)
+	}
+
+	controlClient := r.ControlClient
+	if controlClient == nil {
+		controlClient = &HTTPControlClient{Client: r.Client}
+	}
+
+	// Fence the old primary before moving the primary role so a recovered node
+	// cannot accept writes (split brain). The PVC is retained for rejoin.
+	if err := r.fenceInstancePod(ctx, cluster, observed.PrimaryName); err != nil {
+		return true, ctrl.Result{}, fmt.Errorf("fence old primary %s: %w", observed.PrimaryName, err)
+	}
+	if err := controlClient.Promote(ctx, cluster, candidate); err != nil {
+		return true, ctrl.Result{}, fmt.Errorf("promote %s: %w", candidate, err)
+	}
+	source := sourceOptions(cluster, candidate)
+	for _, name := range observed.InstanceNames {
+		if name == candidate || name == observed.PrimaryName {
+			continue
+		}
+		if _, ok := observed.StatusByInstance[name]; !ok {
+			continue
+		}
+		if err := controlClient.ConfigureReplica(ctx, cluster, name, source); err != nil {
+			return true, ctrl.Result{}, fmt.Errorf("configure %s as replica of %s: %w", name, candidate, err)
+		}
+	}
+	if err := r.patchRoleLabels(ctx, cluster, observed.InstanceNames, candidate); err != nil {
+		return true, ctrl.Result{}, err
+	}
+	if err := r.updateStatus(ctx, cluster, func(s *mysqlv1alpha1.ClusterStatus) {
+		s.CurrentPrimary = candidate
+		s.TargetPrimary = candidate
+		s.CurrentPrimaryTimestamp = metav1.Now().Format(time.RFC3339)
+		s.PrimaryFailingSince = ""
+		s.Phase = phaseFailingOver
+		s.PhaseReason = fmt.Sprintf("Failed over from %s to %s", observed.PrimaryName, candidate)
+	}); err != nil {
+		return true, ctrl.Result{}, err
+	}
+	if r.Recorder != nil {
+		r.Recorder.Event(cluster, corev1.EventTypeWarning, phaseFailingOver,
+			fmt.Sprintf("Failed over from %s to %s", observed.PrimaryName, candidate))
+	}
+	return true, ctrl.Result{RequeueAfter: provisioningRequeue}, nil
+}
+
+// selectFailoverCandidate picks the safest replica to promote: a ready replica
+// with healthy SQL apply and no last error whose executed GTID set contains
+// every other candidate's. Ties (equal GTID) break to the lowest ordinal. When
+// no replica dominates all others the sets are incomparable and failover is
+// blocked rather than risking data loss.
+func selectFailoverCandidate(observed observedCluster) (string, string) {
+	var candidates []string
+	for _, name := range observed.InstanceNames {
+		if name == observed.PrimaryName {
+			continue
+		}
+		status, ok := observed.StatusByInstance[name]
+		if !ok || !status.IsReady || status.Role != webserver.RoleReplica {
+			continue
+		}
+		if status.Replication == nil || !status.Replication.SQLRunning || status.Replication.LastError != "" {
+			continue
+		}
+		candidates = append(candidates, name)
+	}
+	if len(candidates) == 0 {
+		return "", "no healthy replica candidate available"
+	}
+	// InstanceNames is ordinal-ordered, so the first dominating candidate is the
+	// lowest ordinal among equally complete replicas.
+	for _, c := range candidates {
+		dominatesAll := true
+		for _, other := range candidates {
+			if c == other {
+				continue
+			}
+			contains, err := replication.GTIDContains(observed.GTIDByInstance[c], observed.GTIDByInstance[other])
+			if err != nil {
+				return "", fmt.Sprintf("comparing gtid sets: %v", err)
+			}
+			if !contains {
+				dominatesAll = false
+				break
+			}
+		}
+		if dominatesAll {
+			return c, ""
+		}
+	}
+	return "", "candidate replicas have diverged GTID sets that cannot be proven safe"
+}
+
+// fenceInstancePod deletes the instance Pod (retaining its PVC) so a recovered
+// old primary cannot serve writes. A missing Pod is already fenced.
+func (r *ClusterReconciler) fenceInstancePod(ctx context.Context, cluster *mysqlv1alpha1.Cluster, name string) error {
+	pod := &corev1.Pod{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: name}, pod); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if pod.DeletionTimestamp != nil {
+		return nil
+	}
+	if err := r.Delete(ctx, pod); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	return nil
+}
+
+// recordPrimaryFailing stamps status.primaryFailingSince on the first reconcile
+// that observes the primary unreachable and returns the effective failing time.
+func (r *ClusterReconciler) recordPrimaryFailing(ctx context.Context, cluster *mysqlv1alpha1.Cluster) (time.Time, error) {
+	if existing := cluster.Status.PrimaryFailingSince; existing != "" {
+		if ts, err := time.Parse(time.RFC3339, existing); err == nil {
+			return ts, nil
+		}
+	}
+	now := time.Now().Truncate(time.Second)
+	if err := r.updateStatus(ctx, cluster, func(s *mysqlv1alpha1.ClusterStatus) {
+		s.PrimaryFailingSince = now.Format(time.RFC3339)
+	}); err != nil {
+		return time.Time{}, err
+	}
+	return now, nil
+}
+
+// patchOperationPhase records an in-flight operation phase (e.g. Degraded,
+// Blocked) while keeping the observed instance topology fields fresh.
+func (r *ClusterReconciler) patchOperationPhase(
+	ctx context.Context,
+	cluster *mysqlv1alpha1.Cluster,
+	observed observedCluster,
+	phase, reason string,
+	ready bool,
+) error {
+	op := observed
+	op.Phase = phase
+	op.PhaseReason = reason
+	op.Ready = ready
+	op.Progressing = !ready
+	return r.patchStatus(ctx, cluster, op)
+}
+
+// updateStatus applies mutate to the latest Cluster status and patches it.
+func (r *ClusterReconciler) updateStatus(ctx context.Context, cluster *mysqlv1alpha1.Cluster, mutate func(*mysqlv1alpha1.ClusterStatus)) error {
+	latest := &mysqlv1alpha1.Cluster{}
+	key := types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}
+	if err := r.Get(ctx, key, latest); err != nil {
+		return err
+	}
+	before := latest.DeepCopy()
+	mutate(&latest.Status)
+	if err := r.Status().Patch(ctx, latest, client.MergeFrom(before)); err != nil {
+		return err
+	}
+	latest.Status.DeepCopyInto(&cluster.Status)
+	return nil
+}

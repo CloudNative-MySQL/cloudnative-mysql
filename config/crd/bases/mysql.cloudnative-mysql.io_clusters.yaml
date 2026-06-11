@@ -3314,6 +3314,12 @@ spec:
               phaseReason:
                 description: PhaseReason gives more detail about the current phase.
                 type: string
+              primaryFailingSince:
+                description: |-
+                  PrimaryFailingSince records when the current primary first became
+                  unreachable. It is used to enforce spec.failoverDelay before an automatic
+                  failover, and is cleared once the primary is healthy again.
+                type: string
               readyInstances:
                 description: ReadyInstances is the number of ready instances.
                 type: integer

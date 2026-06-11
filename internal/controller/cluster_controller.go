@@ -54,6 +54,8 @@ const (
 	phaseReady        = "Ready"
 	phaseBlocked      = "Blocked"
 	phaseSwitchover   = "Switchover"
+	phaseDegraded     = "Degraded"
+	phaseFailingOver  = "FailingOver"
 
 	dataDir       = "/var/lib/mysql"
 	socketPath    = "/var/run/mysqld/mysqld.sock"
@@ -169,6 +171,15 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	observed, err := r.observe(ctx, cluster, plan)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	// An unreachable primary takes precedence over a manual switchover: drive
+	// automatic failover (bounded by spec.failoverDelay) before anything else.
+	failoverHandled, failoverResult, err := r.reconcileFailover(ctx, cluster, plan, observed)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if failoverHandled {
+		return failoverResult, nil
 	}
 	switched, err := r.reconcilePrimaryChange(ctx, cluster, plan, observed)
 	if err != nil {
