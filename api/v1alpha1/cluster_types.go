@@ -572,6 +572,13 @@ type ClusterStatus struct {
 	// +optional
 	TargetPrimaryTimestamp string `json:"targetPrimaryTimestamp,omitempty"`
 
+	// DivergedInstances are replicas whose executed GTID set is not contained in
+	// the primary's (errant transactions). They cannot safely rejoin; their
+	// in-Pod reconciler reads this list and refuses to self-configure as a
+	// replica, leaving them read-only for an operator to resolve.
+	// +optional
+	DivergedInstances []string `json:"divergedInstances,omitempty"`
+
 	// PrimaryFailingSince records when the current primary first became
 	// unreachable. It is used to enforce spec.failoverDelay before an automatic
 	// failover, and is cleared once the primary is healthy again.

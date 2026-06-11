@@ -583,6 +583,11 @@ func (in *ClusterStatus) DeepCopyInto(out *ClusterStatus) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.DivergedInstances != nil {
+		in, out := &in.DivergedInstances, &out.DivergedInstances
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.GTIDExecutedByInstance != nil {
 		in, out := &in.GTIDExecutedByInstance, &out.GTIDExecutedByInstance
 		*out = make(map[string]string, len(*in))

@@ -83,47 +83,25 @@ func (r *ClusterReconciler) reconcileFailover(
 		return true, ctrl.Result{RequeueAfter: readyResync}, r.patchOperationPhase(ctx, cluster, observed, phaseBlocked, blockReason, false)
 	}
 
-	controlClient := r.ControlClient
-	if controlClient == nil {
-		controlClient = &HTTPControlClient{Client: r.Client}
-	}
-
 	// Fence the old primary before moving the primary role so a recovered node
 	// cannot accept writes (split brain). The PVC is retained for rejoin.
 	if err := r.fenceInstancePod(ctx, cluster, observed.PrimaryName); err != nil {
 		return true, ctrl.Result{}, fmt.Errorf("fence old primary %s: %w", observed.PrimaryName, err)
 	}
-	if err := controlClient.Promote(ctx, cluster, candidate); err != nil {
-		return true, ctrl.Result{}, fmt.Errorf("promote %s: %w", candidate, err)
-	}
-	source := sourceOptions(cluster, candidate)
-	for _, name := range observed.InstanceNames {
-		if name == candidate || name == observed.PrimaryName {
-			continue
-		}
-		if _, ok := observed.StatusByInstance[name]; !ok {
-			continue
-		}
-		if err := controlClient.ConfigureReplica(ctx, cluster, name, source); err != nil {
-			return true, ctrl.Result{}, fmt.Errorf("configure %s as replica of %s: %w", name, candidate, err)
-		}
-	}
-	if err := r.patchRoleLabels(ctx, cluster, observed.InstanceNames, candidate); err != nil {
-		return true, ctrl.Result{}, err
-	}
+	// Point targetPrimary at the chosen candidate. Its in-Pod reconciler promotes
+	// it and sets currentPrimary; the surviving replicas re-point themselves.
 	if err := r.updateStatus(ctx, cluster, func(s *mysqlv1alpha1.ClusterStatus) {
-		s.CurrentPrimary = candidate
 		s.TargetPrimary = candidate
-		s.CurrentPrimaryTimestamp = metav1.Now().Format(time.RFC3339)
+		s.TargetPrimaryTimestamp = metav1.Now().Format(time.RFC3339)
 		s.PrimaryFailingSince = ""
 		s.Phase = phaseFailingOver
-		s.PhaseReason = fmt.Sprintf("Failed over from %s to %s", observed.PrimaryName, candidate)
+		s.PhaseReason = fmt.Sprintf("Failing over from %s to %s", observed.PrimaryName, candidate)
 	}); err != nil {
 		return true, ctrl.Result{}, err
 	}
 	if r.Recorder != nil {
 		r.Recorder.Event(cluster, corev1.EventTypeWarning, phaseFailingOver,
-			fmt.Sprintf("Failed over from %s to %s", observed.PrimaryName, candidate))
+			fmt.Sprintf("Failing over from %s to %s", observed.PrimaryName, candidate))
 	}
 	return true, ctrl.Result{RequeueAfter: provisioningRequeue}, nil
 }

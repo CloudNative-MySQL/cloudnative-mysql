@@ -28,7 +28,8 @@ import (
 
 func (r *ClusterReconciler) podSpec(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instancePlan) corev1.PodSpec {
 	podSpec := corev1.PodSpec{
-		RestartPolicy: corev1.RestartPolicyAlways,
+		RestartPolicy:      corev1.RestartPolicyAlways,
+		ServiceAccountName: plan.InstanceServiceAccount,
 		Volumes: []corev1.Volume{
 			{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: inst.PVCName}}},
 			{Name: "run", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
@@ -150,8 +151,13 @@ func joinArgs(cluster *mysqlv1alpha1.Cluster, plan clusterPlan) []string {
 	}
 }
 
-func runArgs(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instancePlan) []string {
-	args := []string{
+func runArgs(cluster *mysqlv1alpha1.Cluster, _ clusterPlan, _ instancePlan) []string {
+	// Role is dynamic: the in-Pod reconciler watches the Cluster and drives the
+	// local mysqld to match status.targetPrimary / currentPrimary. The run
+	// command therefore carries no --role/--source-host; it gets the owning
+	// Cluster identity and the static replication connection parameters (the
+	// source host is derived from currentPrimary at runtime).
+	return []string{
 		"instance", "run",
 		"--mysqld=" + mysqldBinary,
 		"--config=" + configPath,
@@ -159,6 +165,8 @@ func runArgs(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instancePlan
 		"--socket=" + socketPath,
 		"--server-version=$(MYSQL_VERSION)",
 		"--instance-name=$(POD_NAME)",
+		"--cluster-name=" + cluster.Name,
+		"--namespace=$(POD_NAMESPACE)",
 		"--control-user=" + controlUser,
 		"--backup-user=" + backupUser,
 		"--admin-address=" + mysqlconfig.DefaultAdminAddress,
@@ -167,21 +175,13 @@ func runArgs(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instancePlan
 		"--tls-cert=" + serverTLSPath + "/tls.crt",
 		"--tls-key=" + serverTLSPath + "/tls.key",
 		"--tls-client-ca=" + clientCAPath + "/ca.crt",
-	}
-	if inst.IsPrimary {
-		return append(args, "--role="+rolePrimary)
-	}
-	primaryFQDN := plan.primaryName(cluster) + "." + cluster.Namespace + ".svc"
-	return append(args,
-		"--role="+roleReplica,
-		"--source-host="+primaryFQDN,
 		"--source-port=3306",
-		"--replication-user="+replicationUser,
+		"--replication-user=" + replicationUser,
 		"--source-ssl",
-		"--source-ssl-ca="+clientCAPath+"/ca.crt",
-		"--source-ssl-cert="+serverTLSPath+"/tls.crt",
-		"--source-ssl-key="+serverTLSPath+"/tls.key",
-	)
+		"--source-ssl-ca=" + clientCAPath + "/ca.crt",
+		"--source-ssl-cert=" + serverTLSPath + "/tls.crt",
+		"--source-ssl-key=" + serverTLSPath + "/tls.key",
+	}
 }
 
 // initEnv is the environment for the init container, which may run initdb (on
@@ -200,6 +200,7 @@ func runEnv(plan clusterPlan) []corev1.EnvVar {
 	return []corev1.EnvVar{
 		{Name: "MYSQL_VERSION", Value: plan.ServerVersion},
 		{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
+		{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"}}},
 		secretEnv("MYSQL_CONTROL_PASSWORD", plan.ControlSecretName),
 		secretEnv("MYSQL_BACKUP_PASSWORD", plan.BackupSecretName),
 	}

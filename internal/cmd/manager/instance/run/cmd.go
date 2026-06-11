@@ -55,6 +55,8 @@ func NewCommand() *cobra.Command {
 		sourceSSLKey   string
 		backupUser     string
 		xtrabackupPath string
+		clusterName    string
+		namespace      string
 	)
 
 	cmd := &cobra.Command{
@@ -78,22 +80,34 @@ func NewCommand() *cobra.Command {
 				expectedRole = webserver.RolePrimary
 			}
 
+			if namespace == "" {
+				namespace = os.Getenv("POD_NAMESPACE")
+			}
+
+			// Static replication connection parameters. The role reconciler fills
+			// the source host from status.currentPrimary; the legacy fallback uses
+			// the explicit --source-host.
+			sourceTemplate := replication.SourceOptions{
+				Port:         sourcePort,
+				User:         replUser,
+				Password:     os.Getenv("MYSQL_REPLICATION_PASSWORD"),
+				AutoPosition: true,
+				SSL:          useSourceTLS,
+				SSLCA:        sourceSSLCA,
+				SSLCert:      sourceSSLCert,
+				SSLKey:       sourceSSLKey,
+			}
+
+			roleManaged := clusterName != "" && namespace != ""
+
 			var source *replication.SourceOptions
-			if expectedRole == webserver.RoleReplica {
+			if !roleManaged && expectedRole == webserver.RoleReplica {
 				if sourceHost == "" {
 					return fmt.Errorf("--source-host must be set when --role=replica")
 				}
-				source = &replication.SourceOptions{
-					Host:         sourceHost,
-					Port:         sourcePort,
-					User:         replUser,
-					Password:     os.Getenv("MYSQL_REPLICATION_PASSWORD"),
-					AutoPosition: true,
-					SSL:          useSourceTLS,
-					SSLCA:        sourceSSLCA,
-					SSLCert:      sourceSSLCert,
-					SSLKey:       sourceSSLKey,
-				}
+				s := sourceTemplate
+				s.Host = sourceHost
+				source = &s
 			}
 
 			// Enable the streaming backup endpoint when a backup user is set, so
@@ -110,16 +124,19 @@ func NewCommand() *cobra.Command {
 			}
 
 			return instance.Run(cmd.Context(), instance.RunOptions{
-				MysqldPath:    mysqldPath,
-				ConfigFile:    configFile,
-				DataDir:       dataDir,
-				Socket:        socket,
-				Version:       serverVersion,
-				InstanceName:  instanceName,
-				Role:          expectedRole,
-				Source:        source,
-				WebserverAddr: webAddr,
-				Backup:        backup,
+				MysqldPath:     mysqldPath,
+				ConfigFile:     configFile,
+				DataDir:        dataDir,
+				Socket:         socket,
+				Version:        serverVersion,
+				InstanceName:   instanceName,
+				Role:           expectedRole,
+				Source:         source,
+				ClusterName:    clusterName,
+				Namespace:      namespace,
+				SourceTemplate: sourceTemplate,
+				WebserverAddr:  webAddr,
+				Backup:         backup,
 				Control: pool.ControlParams{
 					User:         controlUser,
 					Password:     os.Getenv("MYSQL_CONTROL_PASSWORD"),
@@ -159,6 +176,8 @@ func NewCommand() *cobra.Command {
 	cmd.Flags().StringVar(&sourceSSLKey, "source-ssl-key", "", "Replication client key")
 	cmd.Flags().StringVar(&backupUser, "backup-user", "", "Backup user for streaming clones (password from MYSQL_BACKUP_PASSWORD); enables GET /cluster/backup")
 	cmd.Flags().StringVar(&xtrabackupPath, "xtrabackup", "xtrabackup", "Path to the xtrabackup binary")
+	cmd.Flags().StringVar(&clusterName, "cluster-name", "", "Owning Cluster name; enables the in-Pod role reconciler (dynamic role)")
+	cmd.Flags().StringVar(&namespace, "namespace", "", "Cluster namespace (defaults to POD_NAMESPACE)")
 
 	return cmd
 }

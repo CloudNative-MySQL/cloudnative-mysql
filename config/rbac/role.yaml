@@ -12,6 +12,7 @@ rules:
   - pods
   - pods/status
   - secrets
+  - serviceaccounts
   - services
   verbs:
   - create
@@ -65,3 +66,16 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - rolebindings
+  - roles
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch

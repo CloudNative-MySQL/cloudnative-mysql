@@ -58,6 +58,10 @@ type clusterPlan struct {
 	ROServiceName    string
 	RServiceName     string
 	DisabledServices map[mysqlv1alpha1.ServiceSelectorType]bool
+
+	// InstanceServiceAccount is the ServiceAccount instance Pods run as so their
+	// in-Pod reconciler can watch this Cluster and patch its status.
+	InstanceServiceAccount string
 }
 
 // instancePlan holds the per-instance derived names and identity.
@@ -166,6 +170,8 @@ func (r *ClusterReconciler) buildPlan(ctx context.Context, cluster *mysqlv1alpha
 		ROServiceName:     cluster.Name + "-ro",
 		RServiceName:      cluster.Name + "-r",
 		DisabledServices:  disabledServices(cluster),
+
+		InstanceServiceAccount: cluster.Name + "-instance",
 	}
 	if plan.Instances == 0 {
 		plan.Instances = 1

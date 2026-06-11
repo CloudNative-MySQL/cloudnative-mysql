@@ -353,6 +353,27 @@ var _ = Describe("Manager", Ordered, func() {
 				g.Expect(output).To(ContainSubstring("43"))
 			}, 3*time.Minute, 5*time.Second).Should(Succeed())
 
+			By("restarting a replica Pod and verifying it rejoins the current primary (dynamic role/source)")
+			cmd = exec.Command("kubectl", "delete", "pod", "cluster-sample-3", "--wait=false")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete a replica Pod")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "cluster", "cluster-sample",
+					"-o", "jsonpath={.status.readyInstances}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("3"))
+			}, 6*time.Minute, 5*time.Second).Should(Succeed())
+			// The restarted replica carries no baked --source-host; it must follow
+			// the current primary (cluster-sample-2) and receive its writes.
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "exec", "cluster-sample-3", "--",
+					"mysql", "-uapp", "-p"+password, "-e", "SELECT id FROM app.e2e WHERE id = 43;")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("43"))
+			}, 4*time.Minute, 5*time.Second).Should(Succeed())
+
 			By("deleting the current primary Pod to trigger automatic failover")
 			cmd = exec.Command("kubectl", "delete", "pod", "cluster-sample-2", "--wait=false")
 			_, err = utils.Run(cmd)

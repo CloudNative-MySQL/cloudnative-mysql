@@ -3282,6 +3282,15 @@ spec:
                 description: CurrentPrimaryTimestamp is when the current primary was
                   elected.
                 type: string
+              divergedInstances:
+                description: |-
+                  DivergedInstances are replicas whose executed GTID set is not contained in
+                  the primary's (errant transactions). They cannot safely rejoin; their
+                  in-Pod reconciler reads this list and refuses to self-configure as a
+                  replica, leaving them read-only for an operator to resolve.
+                items:
+                  type: string
+                type: array
               gtidExecutedByInstance:
                 additionalProperties:
                   type: string

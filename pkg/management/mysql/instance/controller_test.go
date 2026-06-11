@@ -193,7 +193,8 @@ type fakeSupervisor struct {
 	err    error
 }
 
-func (f *fakeSupervisor) Restart(context.Context) error { f.called = true; return f.err }
+func (f *fakeSupervisor) Restart(context.Context) error  { f.called = true; return f.err }
+func (f *fakeSupervisor) Shutdown(context.Context) error { f.called = true; return f.err }
 
 func TestRestartUsesSupervisor(t *testing.T) {
 	sup := &fakeSupervisor{}

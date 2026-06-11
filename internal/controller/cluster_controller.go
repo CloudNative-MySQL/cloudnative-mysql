@@ -21,6 +21,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -28,7 +29,6 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
-	"github.com/yyewolf/cnmysql/pkg/management/mysql/replication"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/webserver"
 )
 
@@ -76,13 +76,11 @@ const (
 	readyResync = 30 * time.Second
 )
 
-// InstanceControlClient drives the mTLS control API served by each instance
-// manager.
+// InstanceControlClient reads instance state over the mTLS control API. Role
+// changes are driven by each instance's in-Pod reconciler (CNPG pull-model), so
+// the operator only needs to read status.
 type InstanceControlClient interface {
 	Status(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string) (*webserver.Status, error)
-	Promote(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string) error
-	Demote(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string) error
-	ConfigureReplica(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string, source replication.SourceOptions) error
 }
 
 // ClusterReconciler reconciles a Cluster object.
@@ -98,7 +96,8 @@ type ClusterReconciler struct {
 // +kubebuilder:rbac:groups=mysql.cloudnative-mysql.io,resources=clusters/finalizers,verbs=update
 // +kubebuilder:rbac:groups=mysql.cloudnative-mysql.io,resources=imagecatalogs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=mysql.cloudnative-mysql.io,resources=clusterimagecatalogs,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=configmaps;pods;pods/status;persistentvolumeclaims;secrets;services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=configmaps;pods;pods/status;persistentvolumeclaims;secrets;services;serviceaccounts,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=cert-manager.io,resources=issuers;certificates,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
@@ -134,7 +133,23 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		})
 	}
 
+	// Elect the bootstrap primary by pointing targetPrimary at the first
+	// instance. From here on, role is driven by each instance's in-Pod
+	// reconciler: it promotes itself when it is the target and follows the
+	// current primary otherwise.
+	if cluster.Status.TargetPrimary == "" {
+		if err := r.updateStatus(ctx, cluster, func(s *mysqlv1alpha1.ClusterStatus) {
+			s.TargetPrimary = instanceName(cluster, 1)
+			s.TargetPrimaryTimestamp = metav1.Now().Format(time.RFC3339)
+		}); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	if err := r.ensureCredentials(ctx, cluster, plan); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.ensureInstanceRBAC(ctx, cluster, plan); err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := r.ensureCertificates(ctx, cluster, plan); err != nil {
@@ -181,19 +196,17 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if failoverHandled {
 		return failoverResult, nil
 	}
-	switched, err := r.reconcilePrimaryChange(ctx, cluster, plan, observed)
+	switched, err := r.reconcileSwitchover(ctx, cluster, plan, observed)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if switched {
 		return ctrl.Result{RequeueAfter: provisioningRequeue}, nil
 	}
-	repaired, err := r.reconcileReplicaSources(ctx, cluster, plan, observed)
-	if err != nil {
+	// Keep rw/ro/r routing in step with the current primary (set by whichever
+	// instance promoted itself).
+	if err := r.reconcileRoleLabels(ctx, cluster, observed); err != nil {
 		return ctrl.Result{}, err
-	}
-	if repaired {
-		return ctrl.Result{RequeueAfter: provisioningRequeue}, nil
 	}
 	if err := r.patchStatus(ctx, cluster, observed); err != nil {
 		return ctrl.Result{}, err

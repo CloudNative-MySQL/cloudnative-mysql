@@ -27,6 +27,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yyewolf/cnmysql/pkg/management/mysql/instance/rolereconciler"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/pool"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/replication"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/version"
@@ -51,6 +52,14 @@ type RunOptions struct {
 	// Source configures replication when Role is replica. It lets the main
 	// process repair missing source metadata after a physical clone.
 	Source *replication.SourceOptions
+	// ClusterName and Namespace enable the in-Pod role reconciler: when both are
+	// set, the run loop watches the owning Cluster and drives the local mysqld to
+	// match status.targetPrimary / currentPrimary (CNPG pull-model). The role is
+	// then dynamic and SourceTemplate provides the replication connection
+	// parameters (the source host is derived from currentPrimary).
+	ClusterName    string
+	Namespace      string
+	SourceTemplate replication.SourceOptions
 	// Control describes the privileged control connection used for monitoring.
 	Control pool.ControlParams
 	// WebserverAddr is the listen address for the control API.
@@ -125,7 +134,16 @@ func Run(ctx context.Context, opts RunOptions) error {
 		_ = sup.Shutdown(ctx)
 		return err
 	}
-	if opts.Role == webserver.RoleReplica {
+	// When the owning Cluster is known, the in-Pod role reconciler drives role
+	// transitions dynamically; the run loop only resumes persisted replication.
+	// Otherwise fall back to the static --role/--source bootstrap.
+	roleManaged := opts.ClusterName != "" && opts.Namespace != ""
+	if roleManaged {
+		if err := controller.EnsureReplicaStarted(ctx); err != nil {
+			_ = sup.Shutdown(ctx)
+			return err
+		}
+	} else if opts.Role == webserver.RoleReplica {
 		if opts.Source == nil {
 			_ = sup.Shutdown(ctx)
 			return errors.New("replica source is required when role is replica")
@@ -157,6 +175,23 @@ func Run(ctx context.Context, opts RunOptions) error {
 	mysqldExit := make(chan error, 1)
 	go func() { mysqldExit <- sup.Wait() }()
 
+	// In-Pod role reconciler (CNPG pull-model). Runs until its context is
+	// cancelled during shutdown.
+	roleErr := make(chan error, 1)
+	mgrCtx, cancelMgr := context.WithCancel(ctx)
+	defer cancelMgr()
+	if roleManaged {
+		go func() {
+			roleErr <- rolereconciler.Start(mgrCtx, rolereconciler.StartOptions{
+				Namespace:      opts.Namespace,
+				ClusterName:    opts.ClusterName,
+				InstanceName:   opts.InstanceName,
+				SourceTemplate: opts.SourceTemplate,
+				Local:          controller,
+			})
+		}()
+	}
+
 	var runErr error
 	select {
 	case sig := <-signals:
@@ -165,7 +200,10 @@ func Run(ctx context.Context, opts RunOptions) error {
 		runErr = fmt.Errorf("mysqld exited: %w", err)
 	case err := <-serverErr:
 		runErr = fmt.Errorf("control API server failed: %w", err)
+	case err := <-roleErr:
+		runErr = fmt.Errorf("role reconciler failed: %w", err)
 	}
+	cancelMgr()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), opts.ShutdownTimeout)
 	defer cancel()

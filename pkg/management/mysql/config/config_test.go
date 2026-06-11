@@ -64,9 +64,10 @@ func TestRenderPrimaryBaseline(t *testing.T) {
 	assertContains(t, out, "enforce_gtid_consistency = ON")
 	assertContains(t, out, "binlog_format = ROW")
 	assertContains(t, out, "log_bin = binlog")
-	// A primary is not read-only.
-	assertNotContains(t, out, "read_only")
-	assertNotContains(t, out, "super_read_only")
+	// Every instance boots read-only; the in-Pod reconciler clears it on the
+	// confirmed primary after promotion (closes the split-brain-on-boot window).
+	assertContains(t, out, "read_only = ON")
+	assertContains(t, out, "super_read_only = ON")
 }
 
 func TestRenderReplicaIsReadOnly(t *testing.T) {

@@ -19,30 +19,35 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
-	"github.com/yyewolf/cnmysql/pkg/management/mysql/replication"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/webserver"
 )
 
-func (r *ClusterReconciler) reconcilePrimaryChange(
+// reconcileSwitchover drives a planned switchover requested by setting
+// status.targetPrimary to a replica. In the CNPG pull-model the operator only
+// validates the request and bounds it by spec.maxSwitchoverDelay; the actual
+// promotion/demotion is performed by the instances' in-Pod reconcilers (the
+// target promotes itself and sets currentPrimary, the old primary and other
+// replicas re-point themselves). It returns handled=true while the switchover is
+// in flight so the caller requeues and does not run steady-state status logic.
+func (r *ClusterReconciler) reconcileSwitchover(
 	ctx context.Context,
 	cluster *mysqlv1alpha1.Cluster,
 	plan clusterPlan,
 	observed observedCluster,
 ) (bool, error) {
 	target := cluster.Status.TargetPrimary
-	if target == "" || target == observed.PrimaryName {
+	current := cluster.Status.CurrentPrimary
+	if target == "" || target == current {
 		return false, nil
 	}
-	if observed.PrimaryName == "" {
+	if current == "" {
 		return false, r.patchStatus(ctx, cluster, observedCluster{
 			Phase:       phaseBlocked,
 			PhaseReason: "Cannot switch primary before the current primary is known",
@@ -52,13 +57,8 @@ func (r *ClusterReconciler) reconcilePrimaryChange(
 		})
 	}
 
-	controlClient := r.ControlClient
-	if controlClient == nil {
-		controlClient = &HTTPControlClient{Client: r.Client}
-	}
-
 	if err := validateSwitchoverTarget(observed, target); err != nil {
-		return false, r.patchStatus(ctx, cluster, observedCluster{
+		return true, r.patchStatus(ctx, cluster, observedCluster{
 			Phase:          phaseBlocked,
 			PhaseReason:    err.Error(),
 			Ready:          false,
@@ -70,95 +70,32 @@ func (r *ClusterReconciler) reconcilePrimaryChange(
 			GTIDByInstance: observed.GTIDByInstance,
 		})
 	}
-	if err := validateTargetGTID(observed, observed.PrimaryName, target); err != nil {
-		// Bound the catch-up wait by spec.maxSwitchoverDelay (RTO): if the target
-		// cannot catch up in time, abort rather than demote the primary forever.
-		startedAt, stampErr := r.ensureSwitchoverStarted(ctx, cluster)
-		if stampErr != nil {
-			return false, stampErr
-		}
-		maxDelay := time.Duration(cluster.Spec.MaxSwitchoverDelay) * time.Second
-		if maxDelay > 0 && time.Since(startedAt) > maxDelay {
-			return r.abortSwitchover(ctx, cluster, observed, target)
-		}
-		return false, r.patchStatus(ctx, cluster, observedCluster{
-			Phase:          phaseSwitchover,
-			PhaseReason:    err.Error(),
-			Ready:          false,
-			Progressing:    true,
-			Plan:           plan,
-			PrimaryName:    observed.PrimaryName,
-			InstanceNames:  observed.InstanceNames,
-			ReadyInstances: observed.ReadyInstances,
-			GTIDByInstance: observed.GTIDByInstance,
-		})
-	}
 
-	if err := controlClient.Demote(ctx, cluster, observed.PrimaryName); err != nil {
-		return false, fmt.Errorf("demote %s: %w", observed.PrimaryName, err)
-	}
-	if err := controlClient.Promote(ctx, cluster, target); err != nil {
-		return false, fmt.Errorf("promote %s: %w", target, err)
-	}
-	source := sourceOptions(cluster, target)
-	for _, name := range observed.InstanceNames {
-		if name == target {
-			continue
-		}
-		if _, ok := observed.StatusByInstance[name]; !ok {
-			continue
-		}
-		if err := controlClient.ConfigureReplica(ctx, cluster, name, source); err != nil {
-			return false, fmt.Errorf("configure %s as replica of %s: %w", name, target, err)
-		}
-	}
-	if err := r.patchRoleLabels(ctx, cluster, observed.InstanceNames, target); err != nil {
+	// Bound the switchover by spec.maxSwitchoverDelay (RTO): if the target's
+	// in-Pod reconciler has not promoted it (currentPrimary still != target)
+	// within the budget, abort and restore the original primary.
+	startedAt, err := r.ensureSwitchoverStarted(ctx, cluster)
+	if err != nil {
 		return false, err
 	}
-	if err := r.patchPrimaryStatus(ctx, cluster, target); err != nil {
-		return false, err
+	maxDelay := time.Duration(cluster.Spec.MaxSwitchoverDelay) * time.Second
+	if maxDelay > 0 && time.Since(startedAt) > maxDelay {
+		return r.abortSwitchover(ctx, cluster, current, target)
 	}
-	if r.Recorder != nil {
-		r.Recorder.Event(cluster, corev1.EventTypeNormal, phaseSwitchover, fmt.Sprintf("Switched over to %s", target))
-	}
-	return true, nil
-}
 
-// ensureSwitchoverStarted stamps status.targetPrimaryTimestamp on the first
-// reconcile of a switchover request and returns the effective start time, so the
-// catch-up wait can be bounded by spec.maxSwitchoverDelay.
-func (r *ClusterReconciler) ensureSwitchoverStarted(ctx context.Context, cluster *mysqlv1alpha1.Cluster) (time.Time, error) {
-	if ts := cluster.Status.TargetPrimaryTimestamp; ts != "" {
-		if parsed, err := time.Parse(time.RFC3339, ts); err == nil {
-			return parsed, nil
-		}
-	}
-	now := time.Now().Truncate(time.Second)
-	if err := r.updateStatus(ctx, cluster, func(s *mysqlv1alpha1.ClusterStatus) {
-		s.TargetPrimaryTimestamp = now.Format(time.RFC3339)
-	}); err != nil {
-		return time.Time{}, err
-	}
-	return now, nil
-}
-
-// abortSwitchover cancels a planned switchover whose target failed to catch up
-// within spec.maxSwitchoverDelay, leaving the original primary in place.
-func (r *ClusterReconciler) abortSwitchover(ctx context.Context, cluster *mysqlv1alpha1.Cluster, observed observedCluster, target string) (bool, error) {
-	reason := fmt.Sprintf("switchover to %s aborted: target did not catch up within maxSwitchoverDelay (%ds)",
-		target, cluster.Spec.MaxSwitchoverDelay)
-	if err := r.updateStatus(ctx, cluster, func(s *mysqlv1alpha1.ClusterStatus) {
-		s.TargetPrimary = observed.PrimaryName
-		s.TargetPrimaryTimestamp = ""
-		s.Phase = phaseBlocked
-		s.PhaseReason = reason
-	}); err != nil {
-		return false, err
-	}
-	if r.Recorder != nil {
-		r.Recorder.Event(cluster, corev1.EventTypeWarning, phaseBlocked, reason)
-	}
-	return true, nil
+	// Switchover in flight: the instances do the work. Surface the phase and wait
+	// for currentPrimary to flip to the target.
+	return true, r.patchStatus(ctx, cluster, observedCluster{
+		Phase:          phaseSwitchover,
+		PhaseReason:    fmt.Sprintf("Switching over to %s", target),
+		Ready:          false,
+		Progressing:    true,
+		Plan:           plan,
+		PrimaryName:    observed.PrimaryName,
+		InstanceNames:  observed.InstanceNames,
+		ReadyInstances: observed.ReadyInstances,
+		GTIDByInstance: observed.GTIDByInstance,
+	})
 }
 
 func validateSwitchoverTarget(observed observedCluster, target string) error {
@@ -178,84 +115,57 @@ func validateSwitchoverTarget(observed observedCluster, target string) error {
 	return nil
 }
 
-// validateTargetGTID ensures the promotion target has applied everything the
-// old primary had. The target is safe once its executed GTID set contains the
-// primary's; a strict equality check would needlessly wait while harmless
-// interval coalescing differs.
-func validateTargetGTID(observed observedCluster, currentPrimary, target string) error {
-	primaryGTID := observed.GTIDByInstance[currentPrimary]
-	targetGTID := observed.GTIDByInstance[target]
-	if primaryGTID == "" || targetGTID == "" {
+// ensureSwitchoverStarted stamps status.targetPrimaryTimestamp on the first
+// reconcile of a switchover request and returns the effective start time, so the
+// wait for the target to promote can be bounded by spec.maxSwitchoverDelay.
+func (r *ClusterReconciler) ensureSwitchoverStarted(ctx context.Context, cluster *mysqlv1alpha1.Cluster) (time.Time, error) {
+	if ts := cluster.Status.TargetPrimaryTimestamp; ts != "" {
+		if parsed, err := time.Parse(time.RFC3339, ts); err == nil {
+			return parsed, nil
+		}
+	}
+	now := time.Now().Truncate(time.Second)
+	if err := r.updateStatus(ctx, cluster, func(s *mysqlv1alpha1.ClusterStatus) {
+		s.TargetPrimaryTimestamp = now.Format(time.RFC3339)
+	}); err != nil {
+		return time.Time{}, err
+	}
+	return now, nil
+}
+
+// abortSwitchover cancels a planned switchover whose target failed to be
+// promoted within spec.maxSwitchoverDelay, restoring the original primary as the
+// target.
+func (r *ClusterReconciler) abortSwitchover(ctx context.Context, cluster *mysqlv1alpha1.Cluster, current, target string) (bool, error) {
+	reason := fmt.Sprintf("switchover to %s aborted: not promoted within maxSwitchoverDelay (%ds)",
+		target, cluster.Spec.MaxSwitchoverDelay)
+	if err := r.updateStatus(ctx, cluster, func(s *mysqlv1alpha1.ClusterStatus) {
+		s.TargetPrimary = current
+		s.TargetPrimaryTimestamp = ""
+		s.Phase = phaseBlocked
+		s.PhaseReason = reason
+	}); err != nil {
+		return false, err
+	}
+	if r.Recorder != nil {
+		r.Recorder.Event(cluster, corev1.EventTypeWarning, phaseBlocked, reason)
+	}
+	return true, nil
+}
+
+// reconcileRoleLabels keeps Pod role labels in step with the current primary so
+// the rw Service points only at it and ro/r point at the replicas. The current
+// primary is the authoritative value written by whichever instance promoted
+// itself; it falls back to the observed reporting primary before it is set.
+func (r *ClusterReconciler) reconcileRoleLabels(ctx context.Context, cluster *mysqlv1alpha1.Cluster, observed observedCluster) error {
+	primary := cluster.Status.CurrentPrimary
+	if primary == "" {
+		primary = observed.PrimaryName
+	}
+	if primary == "" {
 		return nil
 	}
-	contains, err := replication.GTIDContains(targetGTID, primaryGTID)
-	if err != nil {
-		return fmt.Errorf("comparing gtid sets of %s and %s: %w", target, currentPrimary, err)
-	}
-	if contains {
-		return nil
-	}
-	return fmt.Errorf("waiting for target primary %s to catch up to %s", target, currentPrimary)
-}
-
-func sourceOptions(cluster *mysqlv1alpha1.Cluster, primaryName string) replication.SourceOptions {
-	return replication.SourceOptions{
-		Host:         primaryName + "." + cluster.Namespace + ".svc",
-		Port:         3306,
-		User:         replicationUser,
-		AutoPosition: true,
-		SSL:          true,
-		SSLCA:        clientCAPath + "/ca.crt",
-		SSLCert:      serverTLSPath + "/tls.crt",
-		SSLKey:       serverTLSPath + "/tls.key",
-	}
-}
-
-func (r *ClusterReconciler) reconcileReplicaSources(
-	ctx context.Context,
-	cluster *mysqlv1alpha1.Cluster,
-	_ clusterPlan,
-	observed observedCluster,
-) (bool, error) {
-	if observed.PrimaryName == "" {
-		return false, nil
-	}
-	controlClient := r.ControlClient
-	if controlClient == nil {
-		controlClient = &HTTPControlClient{Client: r.Client}
-	}
-	diverged := map[string]bool{}
-	for _, name := range observed.DivergedInstances {
-		diverged[name] = true
-	}
-	source := sourceOptions(cluster, observed.PrimaryName)
-	repaired := false
-	for _, name := range observed.InstanceNames {
-		if name == observed.PrimaryName {
-			continue
-		}
-		status, ok := observed.StatusByInstance[name]
-		if !ok || status.Role == webserver.RolePrimary {
-			continue
-		}
-		// A diverged replica cannot safely follow the primary; surfaced by the
-		// status, it must not be silently reconfigured.
-		if diverged[name] {
-			continue
-		}
-		if status.Replication != nil && sameSourceHost(status.Replication.SourceHost, source.Host) {
-			continue
-		}
-		if err := controlClient.ConfigureReplica(ctx, cluster, name, source); err != nil {
-			return false, fmt.Errorf("configure %s as replica of %s: %w", name, observed.PrimaryName, err)
-		}
-		repaired = true
-	}
-	return repaired, nil
-}
-
-func sameSourceHost(current, desired string) bool {
-	return strings.EqualFold(strings.TrimSuffix(current, "."), strings.TrimSuffix(desired, "."))
+	return r.patchRoleLabels(ctx, cluster, observed.InstanceNames, primary)
 }
 
 func (r *ClusterReconciler) patchRoleLabels(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceNames []string, primaryName string) error {
@@ -267,34 +177,21 @@ func (r *ClusterReconciler) patchRoleLabels(ctx context.Context, cluster *mysqlv
 		if pod.DeletionTimestamp != nil {
 			continue
 		}
+		desired := roleReplica
+		if name == primaryName {
+			desired = rolePrimary
+		}
+		if pod.Labels[roleLabel] == desired {
+			continue
+		}
 		before := pod.DeepCopy()
 		if pod.Labels == nil {
 			pod.Labels = map[string]string{}
 		}
-		pod.Labels[roleLabel] = roleReplica
-		if name == primaryName {
-			pod.Labels[roleLabel] = rolePrimary
-		}
+		pod.Labels[roleLabel] = desired
 		if err := r.Patch(ctx, pod, client.MergeFrom(before)); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func (r *ClusterReconciler) patchPrimaryStatus(ctx context.Context, cluster *mysqlv1alpha1.Cluster, primaryName string) error {
-	latest := &mysqlv1alpha1.Cluster{}
-	key := types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}
-	if err := r.Get(ctx, key, latest); err != nil {
-		return err
-	}
-	before := latest.DeepCopy()
-	now := metav1.Now().Format(time.RFC3339)
-	latest.Status.CurrentPrimary = primaryName
-	latest.Status.TargetPrimary = primaryName
-	latest.Status.CurrentPrimaryTimestamp = now
-	latest.Status.TargetPrimaryTimestamp = ""
-	latest.Status.Phase = phaseSwitchover
-	latest.Status.PhaseReason = fmt.Sprintf("Switched over to %s", primaryName)
-	return r.Status().Patch(ctx, latest, client.MergeFrom(before))
 }

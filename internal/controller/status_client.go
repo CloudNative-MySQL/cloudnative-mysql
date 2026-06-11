@@ -31,7 +31,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
-	"github.com/yyewolf/cnmysql/pkg/management/mysql/replication"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/webserver"
 )
 
@@ -62,36 +61,6 @@ func (c *HTTPControlClient) Status(ctx context.Context, cluster *mysqlv1alpha1.C
 		return nil, err
 	}
 	return &status, nil
-}
-
-// Promote asks the instance manager to promote an instance to primary.
-func (c *HTTPControlClient) Promote(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string) error {
-	return c.action(ctx, cluster, instanceName, "/promote", nil)
-}
-
-// Demote asks the instance manager to make an instance read-only.
-func (c *HTTPControlClient) Demote(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string) error {
-	return c.action(ctx, cluster, instanceName, "/demote", nil)
-}
-
-// ConfigureReplica points an instance at the requested source and starts
-// replication.
-func (c *HTTPControlClient) ConfigureReplica(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string, source replication.SourceOptions) error {
-	return c.action(ctx, cluster, instanceName, "/replica/source", webserver.ConfigureReplicaRequest{Source: source})
-}
-
-func (c *HTTPControlClient) action(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName, path string, body any) error {
-	resp, err := c.do(ctx, cluster, instanceName, http.MethodPost, path, body)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("instance action %s on %s returned %s", path, instanceName, resp.Status)
-	}
-	return nil
 }
 
 func (c *HTTPControlClient) do(ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName, method, path string, body any) (*http.Response, error) {

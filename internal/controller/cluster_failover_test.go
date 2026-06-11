@@ -18,7 +18,6 @@ package controller
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -193,15 +192,12 @@ func TestReconcilePrimaryChangeAbortsWhenTargetLagsPastMaxSwitchoverDelay(t *tes
 		},
 	}
 
-	switched, err := reconciler.reconcilePrimaryChange(ctx, cluster, plan, observed)
+	switched, err := reconciler.reconcileSwitchover(ctx, cluster, plan, observed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !switched {
 		t.Fatal("aborted switchover should be reported as handled")
-	}
-	if len(control.demoted) != 0 || len(control.promoted) != 0 {
-		t.Fatalf("aborted switchover must not demote/promote: demoted=%v promoted=%v", control.demoted, control.promoted)
 	}
 	gotCluster := &mysqlv1alpha1.Cluster{}
 	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}, gotCluster); err != nil {
@@ -260,7 +256,7 @@ func unreachablePrimaryObserved() observedCluster {
 func TestReconcileFailoverPromotesBestCandidateImmediately(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	cluster, reconciler, control := failoverCluster(t, 0)
+	cluster, reconciler, _ := failoverCluster(t, 0)
 	observed := unreachablePrimaryObserved()
 
 	handled, result, err := reconciler.reconcileFailover(ctx, cluster, observed.Plan, observed)
@@ -273,16 +269,7 @@ func TestReconcileFailoverPromotesBestCandidateImmediately(t *testing.T) {
 	if result.RequeueAfter == 0 {
 		t.Fatal("expected a requeue after failover")
 	}
-	if got := strings.Join(control.promoted, ","); got != testReplica2 {
-		t.Fatalf("promoted = %q, want demo-2", got)
-	}
-	if _, ok := control.configured[testReplica3]; !ok {
-		t.Fatalf("surviving replica demo-3 was not reconfigured: %#v", control.configured)
-	}
-	if _, ok := control.configured[testPrimary]; ok {
-		t.Fatal("fenced old primary must not be reconfigured")
-	}
-	// Old primary Pod is fenced (deleted).
+	// Old primary Pod is fenced (deleted) so it cannot accept writes on recovery.
 	gotPod := &corev1.Pod{}
 	err = reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: testPrimary}, gotPod)
 	if err == nil && gotPod.DeletionTimestamp == nil {
@@ -294,8 +281,17 @@ func TestReconcileFailoverPromotesBestCandidateImmediately(t *testing.T) {
 	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}, gotCluster); err != nil {
 		t.Fatal(err)
 	}
-	if gotCluster.Status.CurrentPrimary != testReplica2 || gotCluster.Status.PrimaryFailingSince != "" {
-		t.Fatalf("status current=%q failingSince=%q", gotCluster.Status.CurrentPrimary, gotCluster.Status.PrimaryFailingSince)
+	// The operator points targetPrimary at the candidate and clears the failing
+	// marker; the candidate's in-Pod reconciler performs the actual promotion and
+	// sets currentPrimary, so currentPrimary stays unchanged here.
+	if gotCluster.Status.TargetPrimary != testReplica2 {
+		t.Fatalf("targetPrimary = %q, want %q", gotCluster.Status.TargetPrimary, testReplica2)
+	}
+	if gotCluster.Status.PrimaryFailingSince != "" {
+		t.Fatalf("primaryFailingSince = %q, want cleared", gotCluster.Status.PrimaryFailingSince)
+	}
+	if gotCluster.Status.Phase != phaseFailingOver {
+		t.Fatalf("phase = %q, want %q", gotCluster.Status.Phase, phaseFailingOver)
 	}
 }
 

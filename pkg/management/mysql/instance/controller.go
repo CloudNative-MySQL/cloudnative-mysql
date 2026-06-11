@@ -31,9 +31,11 @@ import (
 )
 
 // Supervisor abstracts the mysqld process lifecycle so the controller can
-// trigger a restart without depending on the supervisor implementation.
+// trigger a restart or shutdown without depending on the supervisor
+// implementation.
 type Supervisor interface {
 	Restart(ctx context.Context) error
+	Shutdown(ctx context.Context) error
 }
 
 // Controller is the concrete webserver.InstanceController backed by a local
@@ -189,6 +191,16 @@ func (c *Controller) Restart(ctx context.Context) error {
 		return errors.New("restart is not available: no supervisor configured")
 	}
 	return c.supervisor.Restart(ctx)
+}
+
+// Shutdown stops mysqld via the supervisor. The PID1 run loop then exits and the
+// Pod (RestartPolicy: Always) restarts clean. Used as the fallback when a live
+// demotion of a former primary fails.
+func (c *Controller) Shutdown(ctx context.Context) error {
+	if c.supervisor == nil {
+		return errors.New("shutdown is not available: no supervisor configured")
+	}
+	return c.supervisor.Shutdown(ctx)
 }
 
 // role derives the reported role from the replica state.

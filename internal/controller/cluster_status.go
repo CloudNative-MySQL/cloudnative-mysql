@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -174,16 +173,16 @@ func (r *ClusterReconciler) patchStatus(ctx context.Context, cluster *mysqlv1alp
 		return err
 	}
 	before := latest.DeepCopy()
+	// currentPrimary is owned by the instance that promotes itself (single
+	// writer); the operator only reads it. Everything else is operator-observed.
 	if len(observed.InstanceNames) > 0 {
 		latest.Status.Instances = observed.Plan.Instances
 		latest.Status.InstanceNames = observed.InstanceNames
-		latest.Status.CurrentPrimary = observed.PrimaryName
 		latest.Status.LatestGeneratedNode = observed.Plan.Instances
 		latest.Status.Image = observed.Plan.Image
 	} else {
 		latest.Status.Instances = latest.Spec.Instances
 		latest.Status.InstanceNames = nil
-		latest.Status.CurrentPrimary = ""
 		latest.Status.LatestGeneratedNode = 0
 		latest.Status.Image = ""
 	}
@@ -191,9 +190,7 @@ func (r *ClusterReconciler) patchStatus(ctx context.Context, cluster *mysqlv1alp
 	latest.Status.Phase = observed.Phase
 	latest.Status.PhaseReason = observed.PhaseReason
 	latest.Status.ReadyInstances = observed.ReadyInstances
-	if observed.ReadyInstances > 0 && latest.Status.CurrentPrimaryTimestamp == "" {
-		latest.Status.CurrentPrimaryTimestamp = metav1.Now().Format(time.RFC3339)
-	}
+	latest.Status.DivergedInstances = observed.DivergedInstances
 	if len(observed.GTIDByInstance) > 0 {
 		latest.Status.GTIDExecutedByInstance = observed.GTIDByInstance
 	}
