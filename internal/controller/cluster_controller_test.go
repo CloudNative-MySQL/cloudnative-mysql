@@ -252,8 +252,17 @@ func TestPodSpecUsesInitContainerAndCertManagerSecrets(t *testing.T) {
 	if strings.Contains(runArgsStr, "--role=") {
 		t.Fatalf("run container must not declare a static role: %q", runArgsStr)
 	}
-	if spec.Containers[0].ReadinessProbe.TCPSocket == nil {
-		t.Fatalf("readiness probe must be TCP because the HTTP API requires mTLS")
+	if !strings.Contains(runArgsStr, "--health-addr=:8081") {
+		t.Fatalf("run container should expose the plain health listener: %q", runArgsStr)
+	}
+	if got := spec.Containers[0].ReadinessProbe.HTTPGet; got == nil || got.Path != "/readyz" || got.Port.String() != "health" {
+		t.Fatalf("readiness probe = %#v, want HTTP /readyz on health", got)
+	}
+	if got := spec.Containers[0].LivenessProbe.HTTPGet; got == nil || got.Path != "/livez" || got.Port.String() != "health" {
+		t.Fatalf("liveness probe = %#v, want HTTP /livez on health", got)
+	}
+	if spec.Containers[0].ReadinessProbe.PeriodSeconds != 2 {
+		t.Fatalf("readiness period = %d, want 2", spec.Containers[0].ReadinessProbe.PeriodSeconds)
 	}
 	volumes := map[string]string{}
 	for _, volume := range spec.Volumes {

@@ -14,9 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package webserver exposes the instance control and observability API the
-// operator calls over mutually-authenticated TLS: probes, status, and the
-// promote/demote/restart lifecycle commands.
+// Package webserver exposes the instance control API the operator calls over
+// mutually-authenticated TLS, plus a small unauthenticated health handler for
+// Kubernetes probes.
 package webserver
 
 import (
@@ -64,6 +64,7 @@ type BackupStreamer interface {
 func Handler(controller InstanceController) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler(controller.Healthz))
+	mux.HandleFunc("GET /livez", healthHandler(controller.Healthz))
 	mux.HandleFunc("GET /readyz", healthHandler(controller.Readyz))
 	mux.HandleFunc("GET /status", statusHandler(controller))
 	mux.HandleFunc("POST /promote", actionHandler(controller.Promote))
@@ -73,6 +74,16 @@ func Handler(controller InstanceController) http.Handler {
 	if streamer, ok := controller.(BackupStreamer); ok {
 		mux.HandleFunc("GET /cluster/backup", backupHandler(streamer))
 	}
+	return mux
+}
+
+// HealthHandler builds the unauthenticated health API used by Kubernetes
+// probes. It deliberately exposes only liveness/readiness endpoints; lifecycle
+// actions and status remain on the mTLS control API.
+func HealthHandler(controller InstanceController) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /livez", healthHandler(controller.Healthz))
+	mux.HandleFunc("GET /readyz", healthHandler(controller.Readyz))
 	return mux
 }
 

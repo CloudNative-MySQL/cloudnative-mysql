@@ -64,6 +64,8 @@ type RunOptions struct {
 	Control pool.ControlParams
 	// WebserverAddr is the listen address for the control API.
 	WebserverAddr string
+	// HealthAddr is the plain HTTP listen address for Kubernetes probes.
+	HealthAddr string
 	// Backup, when set, enables the streaming physical-backup endpoint so this
 	// instance can clone replicas.
 	Backup *BackupConfig
@@ -85,6 +87,9 @@ func (o *RunOptions) applyDefaults() {
 	}
 	if o.ReadyTimeout == 0 {
 		o.ReadyTimeout = 120 * time.Second
+	}
+	if o.HealthAddr == "" {
+		o.HealthAddr = ":8081"
 	}
 }
 
@@ -178,9 +183,12 @@ func Run(ctx context.Context, opts RunOptions) error {
 		_ = sup.Shutdown(ctx)
 		return err
 	}
+	healthSrv := buildHealthServer(opts, controller)
 
 	serverErr := make(chan error, 1)
 	go func() { serverErr <- serve(srv, opts.TLS) }()
+	healthErr := make(chan error, 1)
+	go func() { healthErr <- servePlain(healthSrv) }()
 
 	// mysqld exit signals the supervisor's wait channel.
 	mysqldExit := make(chan error, 1)
@@ -211,6 +219,8 @@ func Run(ctx context.Context, opts RunOptions) error {
 		runErr = fmt.Errorf("mysqld exited: %w", err)
 	case err := <-serverErr:
 		runErr = fmt.Errorf("control API server failed: %w", err)
+	case err := <-healthErr:
+		runErr = fmt.Errorf("health API server failed: %w", err)
 	case err := <-roleErr:
 		runErr = fmt.Errorf("role reconciler failed: %w", err)
 	}
@@ -219,9 +229,18 @@ func Run(ctx context.Context, opts RunOptions) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), opts.ShutdownTimeout)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+	_ = healthSrv.Shutdown(shutdownCtx)
 	_ = sup.Shutdown(shutdownCtx)
 
 	return runErr
+}
+
+func buildHealthServer(opts RunOptions, controller webserver.InstanceController) *http.Server {
+	return &http.Server{
+		Addr:              opts.HealthAddr,
+		Handler:           webserver.HealthHandler(controller),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 }
 
 // buildServer constructs the control API server, with or without mTLS.
@@ -244,6 +263,14 @@ func serve(srv *http.Server, tls webserver.TLSOptions) error {
 	} else {
 		err = srv.ListenAndServe()
 	}
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
+}
+
+func servePlain(srv *http.Server) error {
+	err := srv.ListenAndServe()
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}

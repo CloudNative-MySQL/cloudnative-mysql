@@ -58,21 +58,24 @@ func (r *ClusterReconciler) podSpec(cluster *mysqlv1alpha1.Cluster, plan cluster
 			Ports: []corev1.ContainerPort{
 				{Name: "mysql", ContainerPort: 3306},
 				{Name: "control", ContainerPort: 8080},
+				{Name: "health", ContainerPort: 8081},
 			},
 			VolumeMounts:    volumeMounts(),
 			Resources:       cluster.Spec.Resources,
 			SecurityContext: cluster.Spec.SecurityContext,
 			ReadinessProbe: &corev1.Probe{
-				ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{
-					Port: intstr.FromString("control"),
+				ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
+					Path: "/readyz",
+					Port: intstr.FromString("health"),
 				}},
-				PeriodSeconds: 10,
+				PeriodSeconds: 2,
 			},
 			LivenessProbe: &corev1.Probe{
-				ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{
-					Port: intstr.FromString("control"),
+				ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
+					Path: "/livez",
+					Port: intstr.FromString("health"),
 				}},
-				PeriodSeconds: 30,
+				PeriodSeconds: 10,
 			},
 		}},
 		NodeSelector:              cluster.Spec.Affinity.NodeSelector,
@@ -172,6 +175,7 @@ func runArgs(cluster *mysqlv1alpha1.Cluster, _ clusterPlan, _ instancePlan) []st
 		"--admin-address=" + mysqlconfig.DefaultAdminAddress,
 		fmt.Sprintf("--admin-port=%d", mysqlconfig.DefaultAdminPort),
 		"--web-addr=:8080",
+		"--health-addr=:8081",
 		"--tls-cert=" + serverTLSPath + "/tls.crt",
 		"--tls-key=" + serverTLSPath + "/tls.key",
 		"--tls-client-ca=" + clientCAPath + "/ca.crt",

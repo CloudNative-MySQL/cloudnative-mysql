@@ -121,6 +121,9 @@ func TestHealthzReadyz(t *testing.T) {
 	if rec := do(t, h, http.MethodGet, "/healthz"); rec.Code != http.StatusOK {
 		t.Errorf("healthz = %d, want 200", rec.Code)
 	}
+	if rec := do(t, h, http.MethodGet, "/livez"); rec.Code != http.StatusOK {
+		t.Errorf("livez = %d, want 200", rec.Code)
+	}
 	if rec := do(t, h, http.MethodGet, "/readyz"); rec.Code != http.StatusOK {
 		t.Errorf("readyz = %d, want 200", rec.Code)
 	}
@@ -132,8 +135,27 @@ func TestHealthzReadyz(t *testing.T) {
 	if rec := do(t, unhealthy, http.MethodGet, "/healthz"); rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("unhealthy healthz = %d, want 503", rec.Code)
 	}
+	if rec := do(t, unhealthy, http.MethodGet, "/livez"); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("unhealthy livez = %d, want 503", rec.Code)
+	}
 	if rec := do(t, unhealthy, http.MethodGet, "/readyz"); rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("not-ready readyz = %d, want 503", rec.Code)
+	}
+}
+
+func TestHealthHandlerOnlyServesProbes(t *testing.T) {
+	h := HealthHandler(&fakeController{})
+	if rec := do(t, h, http.MethodGet, "/livez"); rec.Code != http.StatusOK {
+		t.Errorf("livez = %d, want 200", rec.Code)
+	}
+	if rec := do(t, h, http.MethodGet, "/readyz"); rec.Code != http.StatusOK {
+		t.Errorf("readyz = %d, want 200", rec.Code)
+	}
+	if rec := do(t, h, http.MethodGet, "/status"); rec.Code != http.StatusNotFound {
+		t.Errorf("status on health handler = %d, want 404", rec.Code)
+	}
+	if rec := do(t, h, http.MethodPost, "/promote"); rec.Code != http.StatusNotFound {
+		t.Errorf("promote on health handler = %d, want 404", rec.Code)
 	}
 }
 
