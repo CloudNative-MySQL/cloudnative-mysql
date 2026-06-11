@@ -309,8 +309,9 @@ var _ = Describe("Manager", Ordered, func() {
 			}, 3*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("verifying the rw and ro Services route to the right roles")
-			cmd = exec.Command("kubectl", "get", "endpoints", "cluster-sample-rw",
-				"-o", "jsonpath={.subsets[*].addresses[*].targetRef.name}")
+			cmd = exec.Command("kubectl", "get", "endpointslice",
+				"-l", "kubernetes.io/service-name=cluster-sample-rw",
+				"-o", "jsonpath={.items[*].endpoints[*].targetRef.name}")
 			output, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(output).To(Equal("cluster-sample-1"), "rw must route only to the primary")
