@@ -31,19 +31,21 @@ import (
 // NewCommand builds the `instance run` command.
 func NewCommand() *cobra.Command {
 	var (
-		mysqldPath    string
-		dataDir       string
-		configFile    string
-		socket        string
-		serverVersion string
-		instanceName  string
-		controlUser   string
-		adminAddress  string
-		adminPort     int
-		webAddr       string
-		serverCert    string
-		serverKey     string
-		clientCA      string
+		mysqldPath     string
+		dataDir        string
+		configFile     string
+		socket         string
+		serverVersion  string
+		instanceName   string
+		controlUser    string
+		adminAddress   string
+		adminPort      int
+		webAddr        string
+		serverCert     string
+		serverKey      string
+		clientCA       string
+		backupUser     string
+		xtrabackupPath string
 	)
 
 	cmd := &cobra.Command{
@@ -63,6 +65,19 @@ func NewCommand() *cobra.Command {
 				instanceName = os.Getenv("POD_NAME")
 			}
 
+			// Enable the streaming backup endpoint when a backup user is set, so
+			// this instance can clone replicas.
+			var backup *instance.BackupConfig
+			if backupUser != "" {
+				backup = &instance.BackupConfig{
+					XtrabackupPath: xtrabackupPath,
+					DataDir:        dataDir,
+					Socket:         socket,
+					User:           backupUser,
+					Password:       os.Getenv("MYSQL_BACKUP_PASSWORD"),
+				}
+			}
+
 			return instance.Run(cmd.Context(), instance.RunOptions{
 				MysqldPath:    mysqldPath,
 				ConfigFile:    configFile,
@@ -71,6 +86,7 @@ func NewCommand() *cobra.Command {
 				Version:       serverVersion,
 				InstanceName:  instanceName,
 				WebserverAddr: webAddr,
+				Backup:        backup,
 				Control: pool.ControlParams{
 					User:         controlUser,
 					Password:     os.Getenv("MYSQL_CONTROL_PASSWORD"),
@@ -100,6 +116,8 @@ func NewCommand() *cobra.Command {
 	cmd.Flags().StringVar(&serverCert, "tls-cert", "", "Control API server certificate (enables mTLS)")
 	cmd.Flags().StringVar(&serverKey, "tls-key", "", "Control API server key")
 	cmd.Flags().StringVar(&clientCA, "tls-client-ca", "", "Control API client CA bundle")
+	cmd.Flags().StringVar(&backupUser, "backup-user", "", "Backup user for streaming clones (password from MYSQL_BACKUP_PASSWORD); enables GET /cluster/backup")
+	cmd.Flags().StringVar(&xtrabackupPath, "xtrabackup", "xtrabackup", "Path to the xtrabackup binary")
 
 	return cmd
 }

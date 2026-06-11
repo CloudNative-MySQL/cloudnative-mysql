@@ -45,6 +45,7 @@ type Controller struct {
 	version    version.Version
 	versionStr string
 	supervisor Supervisor
+	backup     *BackupConfig
 }
 
 // NewController builds a Controller for the named instance. versionStr is the

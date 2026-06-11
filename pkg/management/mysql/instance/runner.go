@@ -49,6 +49,9 @@ type RunOptions struct {
 	Control pool.ControlParams
 	// WebserverAddr is the listen address for the control API.
 	WebserverAddr string
+	// Backup, when set, enables the streaming physical-backup endpoint so this
+	// instance can clone replicas.
+	Backup *BackupConfig
 	// TLS configures the control API mTLS. When ServerCertFile is empty the
 	// control API is served over plain HTTP (development only).
 	TLS webserver.TLSOptions
@@ -115,6 +118,9 @@ func Run(ctx context.Context, opts RunOptions) error {
 	if err != nil {
 		_ = sup.Shutdown(ctx)
 		return err
+	}
+	if opts.Backup != nil {
+		controller.SetBackupConfig(*opts.Backup)
 	}
 
 	srv, err := buildServer(opts, controller)
