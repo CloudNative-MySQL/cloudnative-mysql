@@ -21,9 +21,11 @@ import (
 	"fmt"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
+	"github.com/yyewolf/cnmysql/pkg/management/mysql/objectstore"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/version"
 )
 
@@ -62,6 +64,20 @@ type clusterPlan struct {
 	// InstanceServiceAccount is the ServiceAccount instance Pods run as so their
 	// in-Pod reconciler can watch this Cluster and patch its status.
 	InstanceServiceAccount string
+
+	// Recovery, when set, makes the bootstrap primary restore from an object
+	// store instead of running initdb. Replicas always clone from the primary.
+	Recovery *recoveryPlan
+}
+
+// recoveryPlan locates the physical backup the bootstrap primary restores from.
+type recoveryPlan struct {
+	Bucket      string
+	ArchiveKey  string
+	MetadataKey string
+	// StoreEnv carries the CNMYSQL_S3_* environment (endpoint, region, signing,
+	// credentials) the restore worker needs to reach the object store.
+	StoreEnv []corev1.EnvVar
 }
 
 // instancePlan holds the per-instance derived names and identity.
@@ -129,14 +145,16 @@ func unsupportedReason(cluster *mysqlv1alpha1.Cluster) string {
 	switch {
 	case cluster.Spec.Instances < 1:
 		return "spec.instances must be at least 1"
-	case cluster.Spec.Bootstrap == nil || cluster.Spec.Bootstrap.InitDB == nil:
-		return "M4 supports only bootstrap.initdb; recovery is kept for M6"
-	case cluster.Spec.Bootstrap.Recovery != nil:
-		return "bootstrap.recovery is kept for M6"
+	case cluster.Spec.Bootstrap == nil:
+		return "spec.bootstrap.initdb or spec.bootstrap.recovery is required"
+	case cluster.Spec.Bootstrap.InitDB == nil && cluster.Spec.Bootstrap.Recovery == nil:
+		return "spec.bootstrap.initdb or spec.bootstrap.recovery is required"
+	case cluster.Spec.Bootstrap.Recovery != nil && cluster.Spec.Bootstrap.Recovery.Backup == nil:
+		return "spec.bootstrap.recovery requires a backup reference"
 	case cluster.Spec.Replica != nil:
 		return "replica clusters (following an external source) are kept for a later milestone"
 	case cluster.Spec.BinlogStorage != nil:
-		return "separate binlog storage is kept for M6"
+		return "separate binlog storage is kept for a later milestone"
 	}
 	return ""
 }
@@ -182,7 +200,7 @@ func (r *ClusterReconciler) buildPlan(ctx context.Context, cluster *mysqlv1alpha
 	if cluster.Spec.RootPasswordSecret != nil && cluster.Spec.RootPasswordSecret.Name != "" {
 		plan.RootSecretName = cluster.Spec.RootPasswordSecret.Name
 	}
-	if initdb := cluster.Spec.Bootstrap.InitDB; initdb.Secret != nil && initdb.Secret.Name != "" {
+	if initdb := cluster.Spec.Bootstrap.InitDB; initdb != nil && initdb.Secret != nil && initdb.Secret.Name != "" {
 		plan.AppSecretName = initdb.Secret.Name
 	}
 	if certs != nil {
@@ -199,7 +217,76 @@ func (r *ClusterReconciler) buildPlan(ctx context.Context, cluster *mysqlv1alpha
 			plan.ClientTLSSecret = certs.ReplicationTLSSecret
 		}
 	}
+
+	recovery, err := r.resolveRecovery(ctx, cluster)
+	if err != nil {
+		return clusterPlan{}, err
+	}
+	plan.Recovery = recovery
 	return plan, nil
+}
+
+// resolveRecovery locates the object store and archive keys the bootstrap
+// primary restores from when spec.bootstrap.recovery is set. It returns nil when
+// recovery is not configured.
+//
+// The referenced Backup must stay present and completed for as long as the
+// Cluster references it: its status carries the backupID the archive keys are
+// derived from, and the recovery init-container's spec depends on those keys.
+func (r *ClusterReconciler) resolveRecovery(
+	ctx context.Context,
+	cluster *mysqlv1alpha1.Cluster,
+) (*recoveryPlan, error) {
+	if cluster.Spec.Bootstrap == nil || cluster.Spec.Bootstrap.Recovery == nil {
+		return nil, nil
+	}
+	rec := cluster.Spec.Bootstrap.Recovery
+	if rec.Backup == nil || rec.Backup.Name == "" {
+		return nil, fmt.Errorf("bootstrap.recovery requires a backup reference")
+	}
+
+	backup := &mysqlv1alpha1.Backup{}
+	key := types.NamespacedName{Namespace: cluster.Namespace, Name: rec.Backup.Name}
+	if err := r.Get(ctx, key, backup); err != nil {
+		return nil, fmt.Errorf("resolving recovery backup %q: %w", rec.Backup.Name, err)
+	}
+	if backup.Status.Phase != mysqlv1alpha1.BackupPhaseCompleted {
+		return nil, fmt.Errorf("recovery backup %q is not completed (phase %q)", backup.Name, backup.Status.Phase)
+	}
+	if backup.Status.BackupID == "" {
+		return nil, fmt.Errorf("recovery backup %q has no backupID", backup.Name)
+	}
+
+	store, err := recoveryObjectStore(cluster, backup)
+	if err != nil {
+		return nil, err
+	}
+	store.SetDefaults()
+
+	keys, err := objectstore.BuildBackupKeys(*store, backup.Spec.Cluster.Name, backup.Name, backup.Status.BackupID)
+	if err != nil {
+		return nil, err
+	}
+	return &recoveryPlan{
+		Bucket:      store.Bucket,
+		ArchiveKey:  keys.ArchiveKey,
+		MetadataKey: keys.MetadataKey,
+		StoreEnv:    backupObjectStoreEnv(*store),
+	}, nil
+}
+
+// recoveryObjectStore picks the object store to recover from: the Backup's own
+// override if set, otherwise the recovering cluster's backup object store
+// (same-cluster disaster recovery).
+func recoveryObjectStore(cluster *mysqlv1alpha1.Cluster, backup *mysqlv1alpha1.Backup) (*mysqlv1alpha1.S3ObjectStore, error) {
+	if backup.Spec.ObjectStore != nil {
+		return backup.Spec.ObjectStore.DeepCopy(), nil
+	}
+	if cluster.Spec.Backup != nil && cluster.Spec.Backup.ObjectStore != nil {
+		return cluster.Spec.Backup.ObjectStore.DeepCopy(), nil
+	}
+	return nil, fmt.Errorf(
+		"recovery backup %q has no object store and cluster has no spec.backup.objectStore", backup.Name)
 }
 
 // disabledServices indexes the default services the user turned off.

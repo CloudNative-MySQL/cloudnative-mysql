@@ -69,16 +69,17 @@ func (cluster *Cluster) SetDefaults() {
 	}
 
 	if spec.Backup != nil && spec.Backup.ObjectStore != nil {
-		spec.Backup.ObjectStore.setDefaults()
+		spec.Backup.ObjectStore.SetDefaults()
 	}
 	for i := range spec.ExternalClusters {
 		if spec.ExternalClusters[i].ObjectStore != nil {
-			spec.ExternalClusters[i].ObjectStore.setDefaults()
+			spec.ExternalClusters[i].ObjectStore.SetDefaults()
 		}
 	}
 }
 
-func (store *S3ObjectStore) setDefaults() {
+// SetDefaults fills in the object store's optional fields with their defaults.
+func (store *S3ObjectStore) SetDefaults() {
 	if store.ForcePathStyle == nil {
 		store.ForcePathStyle = ptrTo(true)
 	}

@@ -96,6 +96,7 @@ type ClusterReconciler struct {
 // +kubebuilder:rbac:groups=mysql.cloudnative-mysql.io,resources=clusters/finalizers,verbs=update
 // +kubebuilder:rbac:groups=mysql.cloudnative-mysql.io,resources=imagecatalogs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=mysql.cloudnative-mysql.io,resources=clusterimagecatalogs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=mysql.cloudnative-mysql.io,resources=backups,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps;pods;pods/status;persistentvolumeclaims;secrets;services;serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=cert-manager.io,resources=issuers;certificates,verbs=get;list;watch;create;update;patch;delete
@@ -170,6 +171,30 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			PhaseReason: "Waiting for cert-manager certificates",
 			Ready:       false,
 			Progressing: true,
+			Plan:        plan,
+		})
+	}
+
+	// Guard against a fresh cluster adopting (and overwriting) an object-store
+	// destination that already holds another cluster's backups. Block before any
+	// instance is provisioned so the primary never archives over existing data.
+	if check := r.checkBackupDestination(ctx, cluster); check.Retry != nil {
+		log.Info("Could not verify backup destination, will retry", "error", check.Retry.Error())
+		return ctrl.Result{RequeueAfter: provisioningRequeue}, r.patchStatus(ctx, cluster, observedCluster{
+			Phase:       phaseProvisioning,
+			PhaseReason: "Verifying backup destination is empty",
+			Ready:       false,
+			Progressing: true,
+			Plan:        plan,
+		})
+	} else if check.Blocked != "" {
+		log.Info("Blocking cluster: backup destination is not empty", "reason", check.Blocked)
+		r.Recorder.Event(cluster, corev1.EventTypeWarning, "BackupDestinationNotEmpty", check.Blocked)
+		return ctrl.Result{RequeueAfter: readyResync}, r.patchStatus(ctx, cluster, observedCluster{
+			Phase:       phaseBlocked,
+			PhaseReason: check.Blocked,
+			Ready:       false,
+			Progressing: false,
 			Plan:        plan,
 		})
 	}

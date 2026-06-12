@@ -20,6 +20,7 @@ package instance
 import (
 	"github.com/spf13/cobra"
 
+	"github.com/yyewolf/cnmysql/internal/cmd/manager/instance/backup"
 	"github.com/yyewolf/cnmysql/internal/cmd/manager/instance/initdb"
 	"github.com/yyewolf/cnmysql/internal/cmd/manager/instance/join"
 	"github.com/yyewolf/cnmysql/internal/cmd/manager/instance/restore"
@@ -36,6 +37,7 @@ func NewCommand() *cobra.Command {
 
 	cmd.AddCommand(
 		run.NewCommand(),
+		backup.NewCommand(),
 		initdb.NewCommand(),
 		join.NewCommand(),
 		restore.NewCommand(),

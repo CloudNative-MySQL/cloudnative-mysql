@@ -58,7 +58,9 @@ func (r *ClusterReconciler) ensureCredentials(ctx context.Context, cluster *mysq
 			return err
 		}
 	}
-	if initdb := cluster.Spec.Bootstrap.InitDB; initdb.Secret == nil {
+	// On recovery the application user comes from the restored data, so no app
+	// secret is generated; only initdb provisions one.
+	if initdb := cluster.Spec.Bootstrap.InitDB; initdb != nil && initdb.Secret == nil {
 		user := initdb.Owner
 		if user == "" {
 			user = "app"

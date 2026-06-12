@@ -171,6 +171,15 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "cluster")
 		os.Exit(1)
 	}
+	if err := (&controller.BackupReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		//nolint:staticcheck // BackupReconciler uses the typed EventRecorder interface.
+		Recorder: mgr.GetEventRecorderFor("backup-controller"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "backup")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

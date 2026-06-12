@@ -70,6 +70,135 @@ spec:
                 - xtrabackup
                 - volumeSnapshot
                 type: string
+              objectStore:
+                description: |-
+                  ObjectStore overrides the destination configured on the referenced
+                  Cluster. When omitted, the Cluster's backup object store is used.
+                properties:
+                  bucket:
+                    description: Bucket is the destination bucket name.
+                    type: string
+                  credentials:
+                    description: Credentials to access the object store.
+                    properties:
+                      accessKeyId:
+                        description: The reference to the secret key containing the
+                          access key id.
+                        properties:
+                          key:
+                            description: Key within the Secret to select
+                            type: string
+                          name:
+                            description: Name of the Secret
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      inheritFromIAMRole:
+                        default: false
+                        description: |-
+                          InheritFromIAMRole, when true, makes the credentials be retrieved from the
+                          pod's environment (IRSA / instance profile) instead of from a secret.
+                        type: boolean
+                      secretAccessKey:
+                        description: The reference to the secret key containing the
+                          secret access key.
+                        properties:
+                          key:
+                            description: Key within the Secret to select
+                            type: string
+                          name:
+                            description: Name of the Secret
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      sessionToken:
+                        description: |-
+                          The reference to the secret key containing the session token, used for
+                          temporary credentials.
+                        properties:
+                          key:
+                            description: Key within the Secret to select
+                            type: string
+                          name:
+                            description: Name of the Secret
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                    type: object
+                  endpoint:
+                    description: |-
+                      Endpoint is the URL of the S3-compatible service. Leave empty to target
+                      AWS S3 with the region's default endpoint.
+                    type: string
+                  forcePathStyle:
+                    default: true
+                    description: |-
+                      ForcePathStyle uses path-style addressing (endpoint/bucket/key) instead of
+                      virtual-hosted style (bucket.endpoint/key). Required by MinIO, Ceph and
+                      most non-AWS providers; defaults to true for maximum compatibility.
+                    type: boolean
+                  path:
+                    description: |-
+                      Path is the key prefix (folder) inside the bucket under which backups are
+                      stored.
+                    type: string
+                  region:
+                    description: |-
+                      Region is the bucket region. Required by most providers; for AWS it
+                      selects the regional endpoint.
+                    type: string
+                  serverSideEncryption:
+                    description: ServerSideEncryption sets the SSE algorithm (e.g.
+                      "AES256" or "aws:kms").
+                    type: string
+                  signatureVersion:
+                    default: s3v4
+                    description: |-
+                      SignatureVersion selects the request signing scheme. Defaults to s3v4;
+                      set to s3v2 for legacy providers.
+                    enum:
+                    - s3v4
+                    - s3v2
+                    type: string
+                  storageClass:
+                    description: StorageClass sets the object storage class (e.g.
+                      "STANDARD_IA").
+                    type: string
+                  tls:
+                    description: TLS configuration for the endpoint connection.
+                    properties:
+                      caBundleSecret:
+                        description: |-
+                          CABundleSecret references a secret key holding a PEM CA bundle used to
+                          verify the endpoint certificate (for private CAs / self-signed endpoints).
+                        properties:
+                          key:
+                            description: Key within the Secret to select
+                            type: string
+                          name:
+                            description: Name of the Secret
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      insecureSkipVerify:
+                        default: false
+                        description: |-
+                          InsecureSkipVerify disables TLS certificate verification against the
+                          endpoint. Use only for testing.
+                        type: boolean
+                    type: object
+                required:
+                - bucket
+                - credentials
+                type: object
               online:
                 default: true
                 description: Online, when true, performs a non-blocking (hot) backup.
@@ -174,6 +303,9 @@ spec:
               instanceName:
                 description: InstanceName is the instance the backup was taken from.
                 type: string
+              jobName:
+                description: JobName is the Kubernetes Job running this backup.
+                type: string
               method:
                 description: Method is the method that was used.
                 enum:
@@ -182,6 +314,9 @@ spec:
                 type: string
               phase:
                 description: Phase is the current phase of the backup.
+                type: string
+              sha256:
+                description: SHA256 is the checksum of the uploaded backup artifact.
                 type: string
               startedAt:
                 description: StartedAt/StoppedAt record the backup timing.
