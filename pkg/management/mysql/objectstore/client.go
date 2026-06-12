@@ -218,6 +218,19 @@ func (c *Client) IsEmptyPrefix(ctx context.Context, bucket, prefix string) (bool
 	return false, nil
 }
 
+// Exists reports whether bucket/key exists. A not-found response is reported as
+// (false, nil); any other error is returned.
+func (c *Client) Exists(ctx context.Context, bucket, key string) (bool, error) {
+	_, err := c.mc.StatObject(ctx, bucket, key, minio.StatObjectOptions{})
+	if err == nil {
+		return true, nil
+	}
+	if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+		return false, nil
+	}
+	return false, fmt.Errorf("stat s3://%s/%s: %w", bucket, key, err)
+}
+
 // GetJSON downloads bucket/key and unmarshals it into v.
 func (c *Client) GetJSON(ctx context.Context, bucket, key string, v any) error {
 	obj, err := c.mc.GetObject(ctx, bucket, key, minio.GetObjectOptions{})

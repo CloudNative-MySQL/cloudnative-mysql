@@ -50,6 +50,31 @@ func (r *Reader) ServerUUID(ctx context.Context) (string, error) {
 	return uuid.String, nil
 }
 
+// Writable reports whether the server currently accepts writes, i.e. it is the
+// confirmed primary. Only the in-Pod role reconciler clears super_read_only on
+// the primary, so a writable server is the archive's authoritative source. It
+// reads super_read_only when available and falls back to read_only.
+func (r *Reader) Writable(ctx context.Context) (bool, error) {
+	var value sql.NullString
+	err := r.conn.QueryRowContext(ctx, "SELECT @@GLOBAL.super_read_only").Scan(&value)
+	if err != nil {
+		// Older servers (pre-5.7.8) lack super_read_only; fall back to read_only.
+		if err2 := r.conn.QueryRowContext(ctx, "SELECT @@GLOBAL.read_only").Scan(&value); err2 != nil {
+			return false, fmt.Errorf("binlog: reading read_only flags: %w", err2)
+		}
+	}
+	return !parseMySQLBool(value.String), nil
+}
+
+func parseMySQLBool(s string) bool {
+	switch s {
+	case "1", "ON", "on", "true", "TRUE", "Yes", "YES":
+		return true
+	default:
+		return false
+	}
+}
+
 // ListBinaryLogs runs SHOW BINARY LOGS and returns the entries with the active
 // (currently-written) log flagged. The active log is the highest-sequence one.
 func (r *Reader) ListBinaryLogs(ctx context.Context) ([]BinaryLog, error) {
