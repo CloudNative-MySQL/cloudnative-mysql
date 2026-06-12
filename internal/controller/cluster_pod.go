@@ -116,6 +116,14 @@ func restoreArgs(plan clusterPlan) []string {
 		"--bucket=" + plan.Recovery.Bucket,
 		"--archive-key=" + plan.Recovery.ArchiveKey,
 		"--metadata-key=" + plan.Recovery.MetadataKey,
+		// Reset the restored internal accounts to this cluster's generated
+		// credentials so the instance manager can authenticate post-recovery.
+		"--mysqld=" + mysqldBinary,
+		"--config=" + configPath,
+		"--socket=" + socketPath,
+		"--server-version=$(MYSQL_VERSION)",
+		"--control-user=" + controlUser,
+		"--backup-user=" + backupUser,
 	}
 }
 

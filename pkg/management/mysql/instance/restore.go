@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"time"
 
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -58,6 +59,26 @@ type RestoreOptions struct {
 	Compress bool
 	// VerifyChecksum compares the downloaded archive against the metadata SHA256.
 	VerifyChecksum bool
+
+	// The fields below drive the post-restore credential reconcile. The restored
+	// data carries the source cluster's internal accounts with the source's
+	// passwords; the recovery cluster generates fresh secrets, so the accounts
+	// must be reset to those before the instance manager can connect. When
+	// RootPassword is empty the reconcile is skipped entirely.
+	MysqldPath string
+	ConfigFile string
+	Socket     string
+	Version    string
+	// ReadyTimeout bounds the temporary reconcile server startup.
+	ReadyTimeout time.Duration
+	// RootPassword resets root@localhost. Its presence enables the reconcile.
+	RootPassword string
+	// ControlUser/ControlPassword and BackupUser/BackupPassword reset the
+	// instance-manager and XtraBackup accounts when both halves are set.
+	ControlUser     string
+	ControlPassword string
+	BackupUser      string
+	BackupPassword  string
 }
 
 func (o *RestoreOptions) applyDefaults() {
@@ -66,6 +87,15 @@ func (o *RestoreOptions) applyDefaults() {
 	}
 	if o.XtrabackupPath == "" {
 		o.XtrabackupPath = defaultXtrabackupBinary
+	}
+	if o.MysqldPath == "" {
+		o.MysqldPath = "mysqld"
+	}
+	if o.Socket == "" {
+		o.Socket = "/var/run/mysqld/mysqld.sock"
+	}
+	if o.ReadyTimeout == 0 {
+		o.ReadyTimeout = 2 * time.Minute
 	}
 }
 
@@ -159,7 +189,87 @@ func Restore(ctx context.Context, opts RestoreOptions) error {
 		return fmt.Errorf("xtrabackup copy-back: %w", err)
 	}
 
+	// 5. Reset the restored internal accounts to this cluster's credentials so the
+	// instance manager (and XtraBackup) can authenticate against the recovered
+	// data. Skipped when no root password is provided.
+	if opts.RootPassword != "" {
+		if err := opts.reconcileCredentials(ctx); err != nil {
+			return fmt.Errorf("reconciling restored credentials: %w", err)
+		}
+	}
+
 	log.Info("Completed restore from object store")
+	return nil
+}
+
+// credentialReconcileStatements returns the SQL that resets the restored
+// internal accounts to the recovery cluster's generated passwords. The
+// replication account is intentionally left untouched: it authenticates with
+// mTLS (REQUIRE X509), so no password is exposed to the Pod.
+func credentialReconcileStatements(version, rootPassword, controlUser, controlPassword, backupUser, backupPassword string) []string {
+	if rootPassword == "" && controlPassword == "" && backupPassword == "" {
+		return nil
+	}
+	d := newBootstrapDialect(version)
+	// FLUSH PRIVILEGES re-enables the grant system after --skip-grant-tables so
+	// the subsequent ALTER USER statements take effect.
+	stmts := []string{"FLUSH PRIVILEGES"}
+	if rootPassword != "" {
+		stmts = append(stmts, d.setUserPassword("root", "localhost", rootPassword))
+	}
+	if controlUser != "" && controlPassword != "" {
+		stmts = append(stmts, d.setUserPassword(controlUser, "%", controlPassword))
+	}
+	if backupUser != "" && backupPassword != "" {
+		stmts = append(stmts, d.setUserPassword(backupUser, "%", backupPassword))
+	}
+	return stmts
+}
+
+// reconcileCredentials starts a temporary socket-only, --skip-grant-tables
+// server over the restored data directory and resets the internal accounts to
+// this cluster's passwords, then shuts it down.
+func (o *RestoreOptions) reconcileCredentials(ctx context.Context) error {
+	log := logf.FromContext(ctx).WithName("instance-restore")
+	stmts := credentialReconcileStatements(
+		o.Version, o.RootPassword, o.ControlUser, o.ControlPassword, o.BackupUser, o.BackupPassword)
+	if len(stmts) == 0 {
+		return nil
+	}
+
+	args := []string{}
+	if o.ConfigFile != "" {
+		args = append(args, "--defaults-file="+o.ConfigFile)
+	}
+	args = append(args,
+		"--datadir="+o.DataDir,
+		"--socket="+o.Socket,
+		"--skip-networking",
+		"--skip-grant-tables",
+	)
+
+	stdout, stderr := newProcessLogWriters(log.WithName("temporary-mysqld"))
+	sup := NewProcessSupervisor(o.MysqldPath, args,
+		WithShutdownTimeout(o.ReadyTimeout),
+		WithOutput(stdout, stderr))
+	log.Info("Starting temporary mysqld to reconcile restored credentials", "socket", o.Socket)
+	if err := sup.Start(ctx); err != nil {
+		return fmt.Errorf("starting temporary server: %w", err)
+	}
+	defer func() { _ = sup.Shutdown(ctx) }()
+
+	db, err := waitForSocket(ctx, o.Socket, "root", "", o.ReadyTimeout)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+
+	log.Info("Reconciling restored credentials", "statements", len(stmts))
+	for _, stmt := range stmts {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("credential reconcile statement failed: %w", err)
+		}
+	}
 	return nil
 }
 

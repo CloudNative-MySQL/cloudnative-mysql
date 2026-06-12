@@ -218,10 +218,18 @@ func (d bootstrapDialect) createUser(name, idClause string) string {
 }
 
 func (d bootstrapDialect) setRootPassword(password string) string {
+	return d.setUserPassword("root", "localhost", password)
+}
+
+// setUserPassword returns the statement that resets an existing account's
+// password, using ALTER USER on modern servers and SET PASSWORD on 5.6.
+func (d bootstrapDialect) setUserPassword(user, host, password string) string {
 	if d.alterForPass {
-		return fmt.Sprintf("ALTER USER 'root'@'localhost' IDENTIFIED BY %s", quoteString(password))
+		return fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY %s",
+			escapeName(user), host, quoteString(password))
 	}
-	return fmt.Sprintf("SET PASSWORD FOR 'root'@'localhost' = PASSWORD(%s)", quoteString(password))
+	return fmt.Sprintf("SET PASSWORD FOR '%s'@'%s' = PASSWORD(%s)",
+		escapeName(user), host, quoteString(password))
 }
 
 // quoteString single-quotes a SQL string literal, escaping backslashes and
