@@ -421,6 +421,46 @@ type BackupConfiguration struct {
 	// XtrabackupOptions are extra flags passed to xtrabackup.
 	// +optional
 	XtrabackupOptions []string `json:"xtrabackupOptions,omitempty"`
+
+	// ContinuousArchiving configures continuous binary-log archiving to the
+	// object store, the foundation for point-in-time recovery. Disabled by
+	// default.
+	// +optional
+	ContinuousArchiving *ContinuousArchivingConfiguration `json:"continuousArchiving,omitempty"`
+}
+
+// ContinuousArchivingConfiguration configures continuous binary-log (binlog)
+// archiving: the current primary's instance manager ships rotated binlog files
+// to the object store so the cluster keeps a gapless, GTID-addressable change
+// history.
+type ContinuousArchivingConfiguration struct {
+	// Enabled turns continuous binlog archiving on. Requires Backup.ObjectStore.
+	// +kubebuilder:default:=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// TargetRPOSeconds bounds the recovery point objective: the primary forces a
+	// binary-log rotation at least this often so a low-write cluster still
+	// archives promptly. Defaults to 300 (5 minutes).
+	// +kubebuilder:validation:Minimum=10
+	// +kubebuilder:default:=300
+	// +optional
+	TargetRPOSeconds int32 `json:"targetRPOSeconds,omitempty"`
+
+	// MaxBinlogSizeMB caps the active binary log before mysqld rotates it,
+	// bounding the size-based RPO and per-object size. Defaults to 16 MiB.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default:=16
+	// +optional
+	MaxBinlogSizeMB int32 `json:"maxBinlogSizeMB,omitempty"`
+
+	// BinlogExpireSeconds is the conservative backstop after which mysqld may
+	// expire a binary log, applied under the active purge gate. Defaults to
+	// 604800 (7 days).
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:default:=604800
+	// +optional
+	BinlogExpireSeconds int32 `json:"binlogExpireSeconds,omitempty"`
 }
 
 // BackupTarget describes which instance a backup is taken from.
@@ -609,6 +649,11 @@ type ClusterStatus struct {
 	// +optional
 	Certificates *CertificatesStatus `json:"certificates,omitempty"`
 
+	// ContinuousArchiving reports the health of continuous binlog archiving when
+	// it is enabled.
+	// +optional
+	ContinuousArchiving *ContinuousArchivingStatus `json:"continuousArchiving,omitempty"`
+
 	// ObservedGeneration is the generation observed by the controller.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -619,6 +664,39 @@ type ClusterStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// ContinuousArchivingStatus reports the health and frontier of continuous
+// binary-log archiving.
+type ContinuousArchivingStatus struct {
+	// Enabled mirrors whether continuous archiving is configured on.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// LastArchivedBinlog is the most recent binary-log file shipped by the
+	// current primary.
+	// +optional
+	LastArchivedBinlog string `json:"lastArchivedBinlog,omitempty"`
+
+	// LastArchivedGTID is the last GTID covered by the archive.
+	// +optional
+	LastArchivedGTID string `json:"lastArchivedGTID,omitempty"`
+
+	// LastArchivedTime is when the most recent file finished archiving.
+	// +optional
+	LastArchivedTime string `json:"lastArchivedTime,omitempty"`
+
+	// PendingFiles is the number of rotated binary logs not yet archived
+	// (archive lag). A growing value means the archiver is falling behind.
+	// +optional
+	PendingFiles int `json:"pendingFiles,omitempty"`
+
+	// LastFailureReason and LastFailureTime record the most recent archiving
+	// failure on the current primary, if any.
+	// +optional
+	LastFailureReason string `json:"lastFailureReason,omitempty"`
+	// +optional
+	LastFailureTime string `json:"lastFailureTime,omitempty"`
 }
 
 // +kubebuilder:object:root=true

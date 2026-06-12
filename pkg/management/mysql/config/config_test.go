@@ -70,6 +70,40 @@ func TestRenderPrimaryBaseline(t *testing.T) {
 	assertNotContains(t, out, "super_read_only")
 }
 
+func TestRenderArchivingDisabled(t *testing.T) {
+	out := mustRender(t, baseConfig())
+	assertNotContains(t, out, "sync_binlog")
+	assertNotContains(t, out, "max_binlog_size")
+	assertNotContains(t, out, "binlog_expire_logs_seconds")
+}
+
+func TestRenderArchivingEnabled(t *testing.T) {
+	c := baseConfig()
+	c.Archiving = Archiving{Enabled: true, MaxBinlogSizeMB: 16, BinlogExpireSeconds: 604800}
+	out := mustRender(t, c)
+	assertContains(t, out, "sync_binlog = 1")
+	assertContains(t, out, "max_binlog_size = 16777216")
+	assertContains(t, out, "binlog_expire_logs_seconds = 604800")
+}
+
+func TestRenderArchivingLegacyExpiry(t *testing.T) {
+	c := baseConfig()
+	c.Version = "5.7.44"
+	c.Archiving = Archiving{Enabled: true, BinlogExpireSeconds: 604800}
+	out := mustRender(t, c)
+	// 604800s = 7 days on a server without binlog_expire_logs_seconds.
+	assertContains(t, out, "expire_logs_days = 7")
+	assertNotContains(t, out, "binlog_expire_logs_seconds")
+}
+
+func TestArchivingKeysAreManaged(t *testing.T) {
+	c := baseConfig()
+	c.UserParameters = map[string]string{"sync_binlog": "0"}
+	if _, err := c.Render(); err == nil {
+		t.Fatal("expected sync_binlog to be rejected as managed")
+	}
+}
+
 func TestRenderReplicaIsReadOnly(t *testing.T) {
 	c := baseConfig()
 	c.Role = RoleReplica
