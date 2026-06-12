@@ -31,3 +31,4 @@ go.work
 
 # Local dev files
 references/
+.kilo/kilo.json
