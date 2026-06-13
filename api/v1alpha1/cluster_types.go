@@ -385,8 +385,16 @@ type BootstrapRecovery struct {
 	Backup *LocalObjectReference `json:"backup,omitempty"`
 
 	// Source is the name of an entry in ExternalClusters to recover from.
+	// Mutually exclusive with Backup. The entry's objectStore holds the
+	// backups and its name is the S3 key prefix to discover them under.
 	// +optional
 	Source string `json:"source,omitempty"`
+
+	// BackupID narrows recovery to a specific base backup within the object
+	// store. Only meaningful when Source is set; when empty, the latest
+	// completed backup is selected. Ignored when Backup is set.
+	// +optional
+	BackupID string `json:"backupID,omitempty"`
 
 	// RecoveryTarget describes the point-in-time recovery target. When omitted,
 	// recovery proceeds to the latest available point.

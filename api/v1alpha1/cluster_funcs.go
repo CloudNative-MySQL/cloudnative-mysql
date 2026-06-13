@@ -242,9 +242,25 @@ func (spec *ClusterSpec) validateBootstrap(path *field.Path) field.ErrorList {
 func (spec *ClusterSpec) validateRecovery(path *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 	rec := spec.Bootstrap.Recovery
-	if rec.Backup == nil || rec.Backup.Name == "" {
+	hasBackup := rec.Backup != nil && rec.Backup.Name != ""
+	switch {
+	case rec.Source == "" && !hasBackup:
 		allErrs = append(allErrs, field.Required(
-			path.Child("backup"), "recovery requires a backup reference"))
+			path.Child("backup"), "recovery requires a backup reference or source"))
+	case rec.Source != "" && hasBackup:
+		allErrs = append(allErrs, field.Invalid(
+			path.Child("source"), rec.Source,
+			"source and backup are mutually exclusive"))
+	case rec.Source != "":
+		if !spec.hasExternalCluster(rec.Source) {
+			allErrs = append(allErrs, field.Invalid(
+				path.Child("source"), rec.Source,
+				"source must reference an entry in externalClusters"))
+		} else if ext := spec.FindExternalCluster(rec.Source); ext != nil && ext.ObjectStore == nil {
+			allErrs = append(allErrs, field.Invalid(
+				path.Child("source"), rec.Source,
+				"external cluster referenced by source must have objectStore configured"))
+		}
 	}
 
 	target := rec.RecoveryTarget
@@ -312,12 +328,18 @@ func (spec *ClusterSpec) validateReplica(path *field.Path) field.ErrorList {
 }
 
 func (spec *ClusterSpec) hasExternalCluster(name string) bool {
+	return spec.FindExternalCluster(name) != nil
+}
+
+// FindExternalCluster returns the externalClusters entry with the given name, or
+// nil when none matches.
+func (spec *ClusterSpec) FindExternalCluster(name string) *ExternalCluster {
 	for i := range spec.ExternalClusters {
 		if spec.ExternalClusters[i].Name == name {
-			return true
+			return &spec.ExternalClusters[i]
 		}
 	}
-	return false
+	return nil
 }
 
 // GetEnableSuperuserAccess returns whether superuser (root) access is enabled,

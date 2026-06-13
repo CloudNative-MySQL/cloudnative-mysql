@@ -46,8 +46,10 @@ flowchart LR
 ## Scope
 
 PITR currently supports recovery of a new `Cluster` from a completed `Backup`
-plus the source cluster's continuous binlog archive. The recovery bootstrap can
-target:
+plus the source cluster's continuous binlog archive. The same targets also apply
+to [raw object-store recovery](backup-recovery#restore-from-raw-object-store-no-backup-cr)
+(`bootstrap.recovery.source`), which resolves the base backup and binlog archive
+straight from S3 without a `Backup` CR. The recovery bootstrap can target:
 
 - `targetGTID`: replay up to an inclusive GTID set.
 - `targetTime`: replay until a wall-clock timestamp.

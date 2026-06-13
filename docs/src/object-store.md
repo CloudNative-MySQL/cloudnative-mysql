@@ -78,6 +78,10 @@ spec:
 
 If omitted, the Backup uses `Cluster.spec.backup.objectStore`.
 
+An `objectStore` also attaches to an `externalClusters` entry, which enables
+[raw object-store recovery](backup-recovery#restore-from-raw-object-store-no-backup-cr):
+a new Cluster bootstraps from the bucket directly, without a `Backup` CR.
+
 ## Fields
 
 | Field | Purpose |

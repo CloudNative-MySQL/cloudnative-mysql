@@ -180,6 +180,57 @@ Without `recoveryTarget`, the Cluster restores to the backup's consistent point.
 With `recoveryTarget`, the PITR path replays archived binlogs after the base
 backup restore.
 
+## Restore from raw object store (no Backup CR)
+
+A Cluster can also recover directly from an object-store bucket without any
+`Backup` object existing in the API server. This is the disaster-recovery path:
+the source cluster's API server (and its `Backup` CRs) may be gone, GC'd by
+retention, or in another cluster entirely — recovery is driven entirely by the
+objects already in S3.
+
+Point `bootstrap.recovery.source` at an `externalClusters` entry. The entry
+carries its own `objectStore` (bucket, path, credentials) and its `name` is the
+S3 key prefix the backups were stored under. No source `Cluster` or `Backup` CR
+needs to exist anywhere.
+
+```yaml
+apiVersion: mysql.cloudnative-mysql.io/v1alpha1
+kind: Cluster
+metadata:
+  name: recovered-cluster
+spec:
+  instances: 3
+  imageName: cnmysql-instance:8.4
+  storage:
+    size: 10Gi
+  bootstrap:
+    recovery:
+      source: prod-cluster          # externalClusters entry name = S3 key prefix
+      backupID: ""                   # empty = latest; set to pin a specific backup
+      recoveryTarget:                # optional PITR, identical to the Backup path
+        targetGTID: "uuid:1-99"
+  externalClusters:
+    - name: prod-cluster
+      objectStore:
+        bucket: cnmysql-backups
+        path: production
+        endpoint: http://minio.minio.svc:9000
+        credentials:
+          accessKeyId:
+            name: minio-creds
+            key: accessKey
+          secretAccessKey:
+            name: minio-creds
+            key: secretKey
+```
+
+The operator lists the base backups under the prefix, selects the latest
+completed one (or the entry matching `backupID` when set), derives the archive
+and metadata keys, and restores exactly as the Backup-based path does. `source`
+and `backup` are mutually exclusive. PITR with `recoveryTarget` works
+identically: the binlog archive is resolved from the same object store under the
+source name.
+
 ## Failure surfaces
 
 Common failure points are reported through Backup phase, Backup conditions, Job
@@ -193,7 +244,11 @@ status, and Events:
 - XtraBackup failure;
 - object-store upload/download failure;
 - checksum mismatch;
-- failed restore prepare or copy-back.
+- failed restore prepare or copy-back;
+- raw-S3 recovery: `source` does not name an `externalClusters` entry;
+- raw-S3 recovery: the referenced external cluster entry has no `objectStore`;
+- raw-S3 recovery: no base backups found under the source prefix;
+- raw-S3 recovery: the requested `backupID` is not present in the object store.
 
 The controller-manager never handles backup payload bytes. Large data movement
 stays in Jobs and init containers so retries are isolated and observable through

@@ -200,9 +200,37 @@ spec:
         targetGTID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-500"
 ```
 
-Raw object-store recovery is planned around `bootstrap.recovery.source` and
-`externalClusters`, but only the implemented backup-object recovery path should
-be considered stable today.
+Raw object-store recovery (no `Backup` CR) points `bootstrap.recovery.source` at
+an `externalClusters` entry. The entry carries its own `objectStore` and its
+`name` is the S3 key prefix backups were stored under:
+
+```yaml
+spec:
+  bootstrap:
+    recovery:
+      source: prod-cluster
+      backupID: ""              # empty = latest completed; set to pin a backup
+      recoveryTarget:           # optional, identical to the Backup path
+        targetGTID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-500"
+  externalClusters:
+    - name: prod-cluster
+      objectStore:
+        bucket: cnmysql-backups
+        path: production
+        endpoint: http://minio.minio.svc:9000
+        credentials:
+          accessKeyId:
+            name: minio-creds
+            key: accessKey
+          secretAccessKey:
+            name: minio-creds
+            key: secretKey
+```
+
+`recovery.backup` and `recovery.source` are mutually exclusive. `backupID` is
+only meaningful with `source`; when empty the operator selects the latest
+completed backup discovered under the source prefix. See
+[Restore from raw object store](backup-recovery#restore-from-raw-object-store-no-backup-cr).
 
 `recoveryTarget` accepts exactly one of:
 

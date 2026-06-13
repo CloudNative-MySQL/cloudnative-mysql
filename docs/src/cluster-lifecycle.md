@@ -99,9 +99,13 @@ The first instance can start in one of two supported ways.
 application users, creates the application database, and applies optional
 post-init SQL.
 
-`bootstrap.recovery.backup` restores a completed physical `Backup` into an
-empty PVC. When a recovery target is present, PITR planning and binlog replay
-run before the recovered mysqld is started as the new primary.
+`bootstrap.recovery.backup` restores from a `Backup` object into an empty PVC;
+`bootstrap.recovery.source` restores directly from an object-store bucket by
+referencing an `externalClusters` entry. A raw-S3 recovery discovers the latest
+or named (`backupID`) base backup in the destination, needing no source
+`Cluster` or `Backup` CR to exist. When a recovery target is present, PITR
+planning and binlog replay run before the recovered mysqld is started as the new
+primary.
 
 Replicas do not run `initdb`. They join by pulling an XtraBackup stream from
 the current primary over the instance-manager mTLS endpoint, preparing it, and

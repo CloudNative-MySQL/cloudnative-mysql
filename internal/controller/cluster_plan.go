@@ -161,8 +161,10 @@ func unsupportedReason(cluster *mysqlv1alpha1.Cluster) string {
 		return "spec.bootstrap.initdb or spec.bootstrap.recovery is required"
 	case cluster.Spec.Bootstrap.InitDB == nil && cluster.Spec.Bootstrap.Recovery == nil:
 		return "spec.bootstrap.initdb or spec.bootstrap.recovery is required"
-	case cluster.Spec.Bootstrap.Recovery != nil && cluster.Spec.Bootstrap.Recovery.Backup == nil:
-		return "spec.bootstrap.recovery requires a backup reference"
+	case cluster.Spec.Bootstrap.Recovery != nil &&
+		cluster.Spec.Bootstrap.Recovery.Backup == nil &&
+		cluster.Spec.Bootstrap.Recovery.Source == "":
+		return "spec.bootstrap.recovery requires a backup reference or source"
 	case cluster.Spec.Replica != nil:
 		return "replica clusters (following an external source) are kept for a later milestone"
 	case cluster.Spec.BinlogStorage != nil:
@@ -253,8 +255,11 @@ func (r *ClusterReconciler) resolveRecovery(
 		return nil, nil
 	}
 	rec := cluster.Spec.Bootstrap.Recovery
+	if rec.Source != "" {
+		return r.resolveRawS3Recovery(ctx, cluster, rec)
+	}
 	if rec.Backup == nil || rec.Backup.Name == "" {
-		return nil, fmt.Errorf("bootstrap.recovery requires a backup reference")
+		return nil, fmt.Errorf("bootstrap.recovery requires a backup reference or source")
 	}
 
 	backup := &mysqlv1alpha1.Backup{}
@@ -317,6 +322,75 @@ func recoveryObjectStore(cluster *mysqlv1alpha1.Cluster, backup *mysqlv1alpha1.B
 	}
 	return nil, fmt.Errorf(
 		"recovery backup %q has no object store and cluster has no spec.backup.objectStore", backup.Name)
+}
+
+// resolveRawS3Recovery bootstraps recovery directly from an object-store bucket
+// referenced by an externalClusters entry, without any source Cluster or Backup
+// CR. The entry's objectStore carries the bucket/path/credentials and its name
+// is the S3 key prefix the base backups and binlog archive live under.
+func (r *ClusterReconciler) resolveRawS3Recovery(
+	ctx context.Context,
+	cluster *mysqlv1alpha1.Cluster,
+	rec *mysqlv1alpha1.BootstrapRecovery,
+) (*recoveryPlan, error) {
+	ext := cluster.Spec.FindExternalCluster(rec.Source)
+	if ext == nil {
+		return nil, fmt.Errorf("bootstrap.recovery.source %q does not reference an externalClusters entry", rec.Source)
+	}
+	if ext.ObjectStore == nil {
+		return nil, fmt.Errorf("externalClusters entry %q has no objectStore configured", rec.Source)
+	}
+	store := ext.ObjectStore.DeepCopy()
+	store.SetDefaults()
+
+	// The external cluster name is the S3 key prefix base backups and binlogs
+	// were stored under, and seeds binlog replay's source cluster.
+	sourceCluster := ext.Name
+
+	cfg, err := r.objectStoreConfig(ctx, cluster.Namespace, store)
+	if err != nil {
+		return nil, err
+	}
+	client, err := objectstore.NewClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := objectstore.ListBaseBackups(ctx, client, *store, sourceCluster)
+	if err != nil {
+		return nil, fmt.Errorf("listing base backups for source %q: %w", rec.Source, err)
+	}
+
+	var entry objectstore.BackupEntry
+	if rec.BackupID != "" {
+		entry, err = objectstore.FindBackupByID(entries, rec.BackupID)
+	} else {
+		entry, err = objectstore.SelectLatestBackup(entries)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// entry.Prefix already ends with a slash.
+	storeEnv := append(backupObjectStoreEnv(*store),
+		corev1.EnvVar{Name: objectstore.EnvBucket, Value: store.Bucket},
+		corev1.EnvVar{Name: objectstore.EnvPath, Value: store.Path},
+	)
+
+	plan := &recoveryPlan{
+		Bucket:        store.Bucket,
+		ArchiveKey:    entry.Prefix + objectstore.BackupArchiveName,
+		MetadataKey:   entry.Prefix + objectstore.BackupMetadataName,
+		StoreEnv:      storeEnv,
+		SourceCluster: sourceCluster,
+		Store:         *store,
+	}
+	if target := rec.RecoveryTarget; target != nil {
+		plan.HasTarget = true
+		plan.TargetTime = target.TargetTime
+		plan.TargetGTID = target.TargetGTID
+		plan.TargetImmediate = target.TargetImmediate != nil && *target.TargetImmediate
+	}
+	return plan, nil
 }
 
 // disabledServices indexes the default services the user turned off.

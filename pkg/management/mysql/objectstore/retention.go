@@ -18,6 +18,7 @@ package objectstore
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"sort"
 	"strings"
@@ -25,6 +26,32 @@ import (
 
 	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
 )
+
+// SelectLatestBackup returns the backup entry with the most recent CompletedAt.
+// It errors when the slice is empty.
+func SelectLatestBackup(entries []BackupEntry) (BackupEntry, error) {
+	if len(entries) == 0 {
+		return BackupEntry{}, fmt.Errorf("no base backups found in object store")
+	}
+	latest := entries[0]
+	for _, entry := range entries[1:] {
+		if entry.Meta.CompletedAt.After(latest.Meta.CompletedAt) {
+			latest = entry
+		}
+	}
+	return latest, nil
+}
+
+// FindBackupByID returns the backup entry whose manifest BackupID matches id. It
+// errors when no entry matches.
+func FindBackupByID(entries []BackupEntry, id string) (BackupEntry, error) {
+	for _, entry := range entries {
+		if entry.Meta.BackupID == id {
+			return entry, nil
+		}
+	}
+	return BackupEntry{}, fmt.Errorf("no base backup with backupID %q found in object store", id)
+}
 
 // BackupEntry pairs a base backup's directory prefix with its manifest.
 type BackupEntry struct {

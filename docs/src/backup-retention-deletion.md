@@ -127,7 +127,8 @@ archive.
 
 Before deleting remote backup data:
 
-- Confirm no Cluster uses `bootstrap.recovery.backup` for that Backup.
+- Confirm no Cluster uses `bootstrap.recovery.backup` or
+  `bootstrap.recovery.source` for that Backup.
 - Confirm no runbook references the backup ID.
 - Confirm a newer base backup exists and is restorable.
 - Confirm PITR archive coverage still satisfies the required recovery window.

@@ -205,6 +205,59 @@ var _ = Describe("Cluster validation", func() {
 		Expect(cluster.Validate()).NotTo(BeEmpty())
 	})
 
+	It("accepts a source-based recovery referencing an objectStore externalCluster", func() {
+		cluster := newValidCluster()
+		cluster.Spec.Bootstrap = &BootstrapConfiguration{
+			Recovery: &BootstrapRecovery{Source: "prod"},
+		}
+		cluster.Spec.ExternalClusters = []ExternalCluster{
+			{Name: "prod", ObjectStore: &S3ObjectStore{Bucket: "backups"}},
+		}
+		Expect(cluster.Validate()).To(BeEmpty())
+	})
+
+	It("rejects source and backup set together", func() {
+		cluster := newValidCluster()
+		cluster.Spec.Bootstrap = &BootstrapConfiguration{
+			Recovery: &BootstrapRecovery{
+				Source: "prod",
+				Backup: &LocalObjectReference{Name: "base"},
+			},
+		}
+		cluster.Spec.ExternalClusters = []ExternalCluster{
+			{Name: "prod", ObjectStore: &S3ObjectStore{Bucket: "backups"}},
+		}
+		Expect(cluster.Validate()).NotTo(BeEmpty())
+	})
+
+	It("rejects a source missing from externalClusters", func() {
+		cluster := newValidCluster()
+		cluster.Spec.Bootstrap = &BootstrapConfiguration{
+			Recovery: &BootstrapRecovery{Source: "prod"},
+		}
+		Expect(cluster.Validate()).NotTo(BeEmpty())
+	})
+
+	It("rejects a source whose externalCluster has no objectStore", func() {
+		cluster := newValidCluster()
+		cluster.Spec.Bootstrap = &BootstrapConfiguration{
+			Recovery: &BootstrapRecovery{Source: "prod"},
+		}
+		cluster.Spec.ExternalClusters = []ExternalCluster{{Name: "prod"}}
+		Expect(cluster.Validate()).NotTo(BeEmpty())
+	})
+
+	It("accepts a source-based recovery with a backupID", func() {
+		cluster := newValidCluster()
+		cluster.Spec.Bootstrap = &BootstrapConfiguration{
+			Recovery: &BootstrapRecovery{Source: "prod", BackupID: "20260612T100000"},
+		}
+		cluster.Spec.ExternalClusters = []ExternalCluster{
+			{Name: "prod", ObjectStore: &S3ObjectStore{Bucket: "backups"}},
+		}
+		Expect(cluster.Validate()).To(BeEmpty())
+	})
+
 	It("rejects a replica source missing from externalClusters", func() {
 		cluster := newValidCluster()
 		cluster.Spec.Replica = &ReplicaClusterConfiguration{Source: "origin"}
