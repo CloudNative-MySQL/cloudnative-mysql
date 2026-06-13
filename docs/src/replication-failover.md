@@ -1,7 +1,7 @@
 ---
 title: "Replication and Failover"
 description: "How CNMySQL manages GTID replicas, service routing, planned switchovers, and automatic failover."
-sidebar_position: 3
+sidebar_position: 9
 ---
 
 # Replication and failover architecture

@@ -1,7 +1,7 @@
 ---
 title: "Instance Images and Versions"
 description: "Supported Percona versions, custom slim image layout, build matrix, and version-specific behavior."
-sidebar_position: 3
+sidebar_position: 4
 ---
 
 # Instance images and versions

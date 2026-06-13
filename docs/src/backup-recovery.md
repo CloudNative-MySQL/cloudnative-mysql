@@ -1,7 +1,7 @@
 ---
 title: "Physical Backup and Recovery"
 description: "How CNMySQL creates XtraBackup archives, uploads them to S3-compatible storage, and restores clusters."
-sidebar_position: 4
+sidebar_position: 10
 ---
 
 # Physical backup and recovery architecture

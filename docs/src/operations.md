@@ -1,7 +1,7 @@
 ---
 title: "Operations Runbooks"
 description: "Common CNMySQL operational tasks: scaling, switchovers, failover, PVC handling, and status inspection."
-sidebar_position: 5
+sidebar_position: 8
 ---
 
 # Operations runbooks

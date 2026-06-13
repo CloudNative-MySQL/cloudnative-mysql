@@ -1,7 +1,7 @@
 ---
 title: "Security Model"
 description: "Credentials, TLS, mTLS, RBAC, object-store secret placement, and current security limits."
-sidebar_position: 4
+sidebar_position: 5
 ---
 
 # Security model
@@ -160,8 +160,6 @@ be logged or copied into status.
 
 ## Current limits and follow-ups
 
-- User-managed TLS certificate bring-your-own-secret support is a future
-  milestone.
 - A CNPG-parity audit is planned for instance status collection and failover
   safety: temporary manager status failures must not trigger unsafe failover by
   themselves.

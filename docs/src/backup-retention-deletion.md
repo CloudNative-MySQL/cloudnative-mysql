@@ -1,7 +1,7 @@
 ---
 title: "Backup Retention and Deletion"
 description: "Current Backup deletion behavior, ScheduledBackup owner references, object-store cleanup, and planned retention GC."
-sidebar_position: 6
+sidebar_position: 11
 ---
 
 # Backup retention and deletion

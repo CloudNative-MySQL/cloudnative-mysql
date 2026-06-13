@@ -1,7 +1,7 @@
 ---
 title: "Troubleshooting"
 description: "Common CNMySQL symptoms, likely causes, and first commands to run."
-sidebar_position: 8
+sidebar_position: 16
 ---
 
 # Troubleshooting

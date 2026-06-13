@@ -1,7 +1,7 @@
 ---
 title: "Multi-Tenancy"
 description: "Using CNMySQL to host many tenants: cluster-per-tenant vs schema-per-tenant, declarative roles and databases, privilege scoping, isolation, and safety controls."
-sidebar_position: 6
+sidebar_position: 7
 ---
 
 # Multi-tenancy with CNMySQL

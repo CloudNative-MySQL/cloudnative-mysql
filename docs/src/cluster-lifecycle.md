@@ -1,7 +1,7 @@
 ---
 title: "Cluster Lifecycle"
 description: "How CNMySQL turns a Cluster object into Percona Server instances, storage, credentials, TLS, and status."
-sidebar_position: 2
+sidebar_position: 3
 ---
 
 # Cluster lifecycle architecture

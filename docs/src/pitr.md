@@ -1,7 +1,7 @@
 ---
 title: "Point-In-Time Recovery"
 description: "Architecture, component responsibilities, recovery flow, RPO/RTO model, and risks for CNMySQL PITR."
-sidebar_position: 10
+sidebar_position: 15
 ---
 
 # Point-In-Time Recovery architecture
