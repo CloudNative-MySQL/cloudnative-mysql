@@ -97,10 +97,13 @@ This is the right home for accounts that belong to the cluster operator: the
 application owner, a read-only reporting account, a migration account. See the
 [Managed roles](./api-reference.md#managed-roles) reference for every field.
 
-### `Database` — a namespaced, delegable tenant resource
+### `Database` — a namespaced tenant resource
 
 The `Database` custom resource is namespace-scoped and references a `Cluster` in
-the **same namespace**. A single `Database` declares:
+the **same namespace** — a `Database` cannot target a `Cluster` in another
+namespace, and it reads its password Secrets from its own namespace. So a
+`Database`, its Secrets, and the `Cluster` they describe always live together.
+A single `Database` declares:
 
 - a schema (`spec.name`), with optional character set and collation;
 - the users that should exist for that schema, each with a password Secret;
@@ -112,7 +115,7 @@ apiVersion: mysql.cloudnative-mysql.io/v1alpha1
 kind: Database
 metadata:
   name: tenant-a
-  namespace: tenant-a            # same namespace as the Cluster
+  namespace: shared              # must be the Cluster's namespace
 spec:
   cluster:
     name: shared
@@ -136,13 +139,28 @@ full field list.
 
 ### Which one for tenancy?
 
-- **`Database` CRs are the multi-tenant primitive.** Because they are
-  namespace-scoped, you can put each tenant's `Database` (and its password
-  Secret) in the tenant's own namespace and delegate it with ordinary
-  Kubernetes RBAC — a tenant team manages its own schema and accounts without
-  ever touching the shared `Cluster` object or the operator's namespace.
-- **`managed.roles` is for cluster-level accounts** the platform owner controls,
-  not for tenant self-service: editing it means editing the shared `Cluster`.
+- **`Database` CRs are the multi-tenant primitive.** Each schema and its
+  accounts are a separate object with its own `status` and reclaim policy,
+  reconciled independently — you add, change, or remove a tenant without
+  touching the `Cluster` object or running SQL.
+- **`managed.roles` is for cluster-level accounts** the platform owner controls
+  inline on the `Cluster`: the application owner, a reporting account. Editing
+  one means editing the shared `Cluster`, so it is not a self-service surface.
+
+Mind the namespace constraint when planning delegation. Because a `Database`
+must live in its `Cluster`'s namespace, the two tenancy models delegate
+differently:
+
+- **Cluster-per-tenant** delegates cleanly by namespace: the tenant's `Cluster`,
+  its `Database` objects, and its Secrets all sit in the tenant's namespace, so
+  ordinary namespace-scoped RBAC hands the whole tenant to its team — they never
+  see another tenant's namespace.
+- **Schema-per-tenant** puts every tenant's `Database` in the *shared* cluster's
+  namespace alongside everyone else's. There is no namespace boundary between
+  tenants here, so a tenant cannot be given blanket write access to that
+  namespace. Delegation, if any, must be per-object RBAC (named `Database` and
+  `Secret` resources) within the shared namespace; otherwise keep these objects
+  operator-managed.
 
 ## Isolation and how it is enforced
 
@@ -162,10 +180,10 @@ break the isolation the model depends on.
 ### Reserved and operator-owned accounts are protected
 
 Managed-role names that collide with operator internals are rejected up front:
-`root`, the `mysql.*` system accounts, and the `cnmysql_*` namespace used for
-the operator's own bootstrap, replication, instance-manager, and backup
-accounts. Tenants cannot declare their way into an account that controls the
-cluster.
+`root`, the `mysql.*` system accounts, and the `cnmysql_*` user-name prefix the
+operator reserves for its own bootstrap, replication, instance-manager, and
+backup accounts. Tenants cannot declare their way into an account that controls
+the cluster.
 
 ### Per-account TLS enforcement
 
@@ -185,10 +203,12 @@ shared server.
 ### Namespace boundaries
 
 A `Database` can only target a `Cluster` in its own namespace, and it reads
-password Secrets from that namespace. This keeps the Kubernetes-level blast
-radius aligned with the namespace: a tenant with write access only to its own
-namespace cannot point a `Database` at another tenant's cluster or read another
-tenant's Secret.
+password Secrets from that namespace — it cannot reach across namespaces. In
+**cluster-per-tenant** this aligns the Kubernetes blast radius with the
+namespace: a team scoped to its own namespace cannot point a `Database` at
+another tenant's cluster or read another tenant's Secret. In **schema-per-tenant**
+the boundary is weaker, because every tenant's `Database` and Secret live in the
+one shared namespace; isolation there rests on MySQL grants, not on namespaces.
 
 ## Configuration hardening as a tenancy control
 
@@ -242,26 +262,27 @@ ephemeral or preview tenants.
 
 ## Worked example: onboarding a tenant (schema-per-tenant)
 
-Onboard `tenant-a` onto a shared `Cluster` named `shared`, fully delegated to
-the tenant's namespace.
+Onboard `tenant-a` onto a shared `Cluster` named `shared`. The `Database` and
+its Secret live in the **same namespace as the `shared` Cluster** (here,
+`shared`), since a `Database` cannot cross namespaces.
 
 ```yaml
-# 1. The tenant's password, in the tenant's namespace.
+# 1. The tenant's password, in the Cluster's namespace.
 apiVersion: v1
 kind: Secret
 metadata:
   name: tenant-a-db
-  namespace: tenant-a
+  namespace: shared
 type: Opaque
 stringData:
   password: "CHANGE-ME-OR-GENERATE"
 ---
-# 2. The tenant: a schema, a scoped account, and a delete reclaim policy.
+# 2. The tenant: a schema, a scoped account, and a reclaim policy.
 apiVersion: mysql.cloudnative-mysql.io/v1alpha1
 kind: Database
 metadata:
   name: tenant-a
-  namespace: tenant-a
+  namespace: shared
 spec:
   cluster:
     name: shared
@@ -283,7 +304,7 @@ Apply, then watch it converge:
 
 ```bash
 kubectl apply -f tenant-a.yaml
-kubectl -n tenant-a get database tenant-a -w
+kubectl -n shared get database tenant-a -w
 # NAME       CLUSTER   DATABASE   APPLIED   AGE
 # tenant-a   shared    tenant_a   true      20s
 ```

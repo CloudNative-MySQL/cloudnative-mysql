@@ -462,7 +462,7 @@ apiVersion: mysql.cloudnative-mysql.io/v1alpha1
 kind: Database
 metadata:
   name: tenant-a
-  namespace: tenant-a
+  namespace: shared            # must match the Cluster's namespace
 spec:
   cluster:
     name: shared
