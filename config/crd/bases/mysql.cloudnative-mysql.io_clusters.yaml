@@ -2114,10 +2114,114 @@ spec:
                   services:
                     description: Services describes the services managed for the cluster.
                     properties:
+                      additional:
+                        description: |-
+                          Additional is a list of additional managed services specified by the
+                          user. Each entry declares a selectorType and an optional template to
+                          overlay on top of the role-specific defaults.
+                        items:
+                          description: ManagedService describes a user-defined managed
+                            service.
+                          properties:
+                            name:
+                              description: |-
+                                Name is the name of the additional service. Must be unique among all
+                                managed services and must not collide with the default service names
+                                (<cluster>-rw, <cluster>-ro, <cluster>-r).
+                              type: string
+                            selectorType:
+                              allOf:
+                              - enum:
+                                - rw
+                                - ro
+                                - r
+                              - enum:
+                                - rw
+                                - r
+                                - ro
+                              description: |-
+                                SelectorType specifies the type of selectors the service will have.
+                                Valid values are "rw", "r", and "ro".
+                              type: string
+                            serviceTemplate:
+                              description: |-
+                                ServiceTemplate is the template specification for the service. When
+                                UpdateStrategy is "patch", fields here are merged on top of the
+                                role-specific defaults. When "replace", they replace the defaults
+                                entirely (except for selector and owner reference).
+                              properties:
+                                metadata:
+                                  description: Standard object's metadata applied
+                                    to the Service.
+                                  properties:
+                                    annotations:
+                                      additionalProperties:
+                                        type: string
+                                      description: Annotations added to the Service.
+                                      type: object
+                                    labels:
+                                      additionalProperties:
+                                        type: string
+                                      description: Labels added to the Service.
+                                      type: object
+                                  type: object
+                                spec:
+                                  description: |-
+                                    Specification of the desired behavior of the Service. The selector field
+                                    is operator-managed and cannot be overridden.
+                                  properties:
+                                    externalName:
+                                      description: ExternalName is the external reference
+                                        for ExternalName services.
+                                      type: string
+                                    externalTrafficPolicy:
+                                      description: ExternalTrafficPolicy describes
+                                        how nodes distribute service traffic.
+                                      type: string
+                                    healthCheckNodePort:
+                                      description: HealthCheckNodePort specifies the
+                                        health check node port.
+                                      format: int32
+                                      type: integer
+                                    loadBalancerSourceRanges:
+                                      description: LoadBalancerSourceRanges restricts
+                                        load balancer access.
+                                      items:
+                                        type: string
+                                      type: array
+                                    sessionAffinity:
+                                      description: SessionAffinity configures session
+                                        affinity.
+                                      type: string
+                                    type:
+                                      description: Type determines how the Service
+                                        is exposed. Defaults to ClusterIP.
+                                      enum:
+                                      - ClusterIP
+                                      - NodePort
+                                      - LoadBalancer
+                                      - ExternalName
+                                      type: string
+                                  type: object
+                              type: object
+                            updateStrategy:
+                              default: patch
+                              description: |-
+                                UpdateStrategy describes how the service template is reconciled with the
+                                operator defaults.
+                              enum:
+                              - patch
+                              - replace
+                              type: string
+                          required:
+                          - name
+                          - selectorType
+                          type: object
+                        type: array
                       disabledDefaultServices:
                         description: |-
                           DisabledDefaultServices is the list of default services (rw, ro, r) to
-                          disable.
+                          disable. The rw service cannot be disabled.
                         items:
                           description: ServiceSelectorType is the type of a default
                             service.
@@ -2127,6 +2231,65 @@ spec:
                           - r
                           type: string
                         type: array
+                      template:
+                        description: |-
+                          Template applies to the three default services (rw, ro, r). Fields set
+                          here are merged into each default service. The operator still chooses the
+                          selector and port based on the service role.
+                        properties:
+                          metadata:
+                            description: Standard object's metadata applied to the
+                              Service.
+                            properties:
+                              annotations:
+                                additionalProperties:
+                                  type: string
+                                description: Annotations added to the Service.
+                                type: object
+                              labels:
+                                additionalProperties:
+                                  type: string
+                                description: Labels added to the Service.
+                                type: object
+                            type: object
+                          spec:
+                            description: |-
+                              Specification of the desired behavior of the Service. The selector field
+                              is operator-managed and cannot be overridden.
+                            properties:
+                              externalName:
+                                description: ExternalName is the external reference
+                                  for ExternalName services.
+                                type: string
+                              externalTrafficPolicy:
+                                description: ExternalTrafficPolicy describes how nodes
+                                  distribute service traffic.
+                                type: string
+                              healthCheckNodePort:
+                                description: HealthCheckNodePort specifies the health
+                                  check node port.
+                                format: int32
+                                type: integer
+                              loadBalancerSourceRanges:
+                                description: LoadBalancerSourceRanges restricts load
+                                  balancer access.
+                                items:
+                                  type: string
+                                type: array
+                              sessionAffinity:
+                                description: SessionAffinity configures session affinity.
+                                type: string
+                              type:
+                                description: Type determines how the Service is exposed.
+                                  Defaults to ClusterIP.
+                                enum:
+                                - ClusterIP
+                                - NodePort
+                                - LoadBalancer
+                                - ExternalName
+                                type: string
+                            type: object
+                        type: object
                     type: object
                 type: object
               maxStartDelay:

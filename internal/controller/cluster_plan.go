@@ -60,6 +60,10 @@ type clusterPlan struct {
 	ROServiceName    string
 	RServiceName     string
 	DisabledServices map[mysqlv1alpha1.ServiceSelectorType]bool
+	// ServiceTemplate is merged onto the three default services (rw/ro/r).
+	ServiceTemplate *mysqlv1alpha1.ServiceTemplateSpec
+	// AdditionalServices are user-declared extra managed services.
+	AdditionalServices []mysqlv1alpha1.ManagedService
 
 	// InstanceServiceAccount is the ServiceAccount instance Pods run as so their
 	// in-Pod reconciler can watch this Cluster and patch its status.
@@ -204,6 +208,10 @@ func (r *ClusterReconciler) buildPlan(ctx context.Context, cluster *mysqlv1alpha
 		DisabledServices:  disabledServices(cluster),
 
 		InstanceServiceAccount: cluster.Name + "-instance",
+	}
+	if cluster.Spec.Managed != nil && cluster.Spec.Managed.Services != nil {
+		plan.ServiceTemplate = cluster.Spec.Managed.Services.Template
+		plan.AdditionalServices = cluster.Spec.Managed.Services.Additional
 	}
 	if plan.Instances == 0 {
 		plan.Instances = 1

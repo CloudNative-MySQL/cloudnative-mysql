@@ -549,9 +549,114 @@ type ManagedConfiguration struct {
 // ManagedServices controls the services generated for the cluster.
 type ManagedServices struct {
 	// DisabledDefaultServices is the list of default services (rw, ro, r) to
-	// disable.
+	// disable. The rw service cannot be disabled.
 	// +optional
 	DisabledDefaultServices []ServiceSelectorType `json:"disabledDefaultServices,omitempty"`
+
+	// Template applies to the three default services (rw, ro, r). Fields set
+	// here are merged into each default service. The operator still chooses the
+	// selector and port based on the service role.
+	// +optional
+	Template *ServiceTemplateSpec `json:"template,omitempty"`
+
+	// Additional is a list of additional managed services specified by the
+	// user. Each entry declares a selectorType and an optional template to
+	// overlay on top of the role-specific defaults.
+	// +optional
+	Additional []ManagedService `json:"additional,omitempty"`
+}
+
+// ManagedService describes a user-defined managed service.
+type ManagedService struct {
+	// SelectorType specifies the type of selectors the service will have.
+	// Valid values are "rw", "r", and "ro".
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=rw;r;ro
+	SelectorType ServiceSelectorType `json:"selectorType"`
+
+	// Name is the name of the additional service. Must be unique among all
+	// managed services and must not collide with the default service names
+	// (<cluster>-rw, <cluster>-ro, <cluster>-r).
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+
+	// UpdateStrategy describes how the service template is reconciled with the
+	// operator defaults.
+	// +kubebuilder:default:="patch"
+	// +optional
+	UpdateStrategy ServiceUpdateStrategy `json:"updateStrategy,omitempty"`
+
+	// ServiceTemplate is the template specification for the service. When
+	// UpdateStrategy is "patch", fields here are merged on top of the
+	// role-specific defaults. When "replace", they replace the defaults
+	// entirely (except for selector and owner reference).
+	// +optional
+	ServiceTemplate ServiceTemplateSpec `json:"serviceTemplate,omitempty"`
+}
+
+// ServiceUpdateStrategy describes how the service template is reconciled.
+// +kubebuilder:validation:Enum=patch;replace
+type ServiceUpdateStrategy string
+
+const (
+	// ServiceUpdateStrategyPatch merges user fields onto operator defaults.
+	ServiceUpdateStrategyPatch ServiceUpdateStrategy = "patch"
+	// ServiceUpdateStrategyReplace replaces operator defaults with the user template.
+	ServiceUpdateStrategyReplace ServiceUpdateStrategy = "replace"
+)
+
+// ServiceTemplateSpec describes the user-customisable parts of a managed
+// Service.
+type ServiceTemplateSpec struct {
+	// Standard object's metadata applied to the Service.
+	// +optional
+	ObjectMeta *ObjectMetaTemplate `json:"metadata,omitempty"`
+
+	// Specification of the desired behavior of the Service. The selector field
+	// is operator-managed and cannot be overridden.
+	// +optional
+	Spec *ServiceTemplateServiceSpec `json:"spec,omitempty"`
+}
+
+// ObjectMetaTemplate carries the user-configurable metadata fields.
+type ObjectMetaTemplate struct {
+	// Labels added to the Service.
+	// +optional
+	Labels map[string]string `json:"labels,omitempty"`
+
+	// Annotations added to the Service.
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+// ServiceTemplateServiceSpec exposes the subset of corev1.ServiceSpec fields
+// that users are allowed to customise. The operator retains control over the
+// selector, ports, clusterIP, and owner reference.
+type ServiceTemplateServiceSpec struct {
+	// Type determines how the Service is exposed. Defaults to ClusterIP.
+	// +kubebuilder:validation:Enum=ClusterIP;NodePort;LoadBalancer;ExternalName
+	// +optional
+	Type *corev1.ServiceType `json:"type,omitempty"`
+
+	// ExternalTrafficPolicy describes how nodes distribute service traffic.
+	// +optional
+	ExternalTrafficPolicy *corev1.ServiceExternalTrafficPolicy `json:"externalTrafficPolicy,omitempty"`
+
+	// SessionAffinity configures session affinity.
+	// +optional
+	SessionAffinity *corev1.ServiceAffinity `json:"sessionAffinity,omitempty"`
+
+	// LoadBalancerSourceRanges restricts load balancer access.
+	// +optional
+	LoadBalancerSourceRanges []string `json:"loadBalancerSourceRanges,omitempty"`
+
+	// ExternalName is the external reference for ExternalName services.
+	// +optional
+	ExternalName string `json:"externalName,omitempty"`
+
+	// HealthCheckNodePort specifies the health check node port.
+	// +optional
+	HealthCheckNodePort *int32 `json:"healthCheckNodePort,omitempty"`
 }
 
 // ServiceSelectorType is the type of a default service.

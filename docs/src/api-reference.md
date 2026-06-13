@@ -287,9 +287,44 @@ spec:
     services:
       disabledDefaultServices:
         - ro
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: my-app
+          annotations:
+            service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+        spec:
+          type: LoadBalancer
+      additional:
+        - name: mysql-lb
+          selectorType: rw
+          serviceTemplate:
+            spec:
+              type: LoadBalancer
+        - name: mysql-internal-read
+          selectorType: ro
+          updateStrategy: replace
+          serviceTemplate:
+            metadata:
+              labels:
+                pool: reporting
+            spec:
+              type: ClusterIP
 ```
 
-`disabledDefaultServices` accepts `rw`, `ro`, and `r`.
+| Field | Type | Description |
+| --- | --- | --- |
+| `disabledDefaultServices` | array | Default services to disable. Accepts `ro` and `r`; the `rw` service cannot be disabled. |
+| `template` | object | Service template merged onto each default rw/ro/r service. |
+| `additional` | array | User-defined extra services routed to a role. |
+| `additional[].name` | string | Rendered as `<cluster>-<name>`; unique and not colliding with default names. |
+| `additional[].selectorType` | enum | `rw`, `ro`, or `r`. |
+| `additional[].updateStrategy` | enum | `patch` (default, merge) or `replace` (swap defaults). |
+| `additional[].serviceTemplate` | object | Same shape as `template`. |
+
+The service template's `spec` exposes `type`, `externalTrafficPolicy`,
+`sessionAffinity`, `loadBalancerSourceRanges`, `externalName`, and
+`healthCheckNodePort`. The selector, ports, and `clusterIP` are operator-managed.
 
 ### External clusters
 

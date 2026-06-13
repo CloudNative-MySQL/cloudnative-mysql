@@ -270,6 +270,49 @@ var _ = Describe("Cluster validation", func() {
 		cluster.Spec.ExternalClusters = []ExternalCluster{{Name: "origin"}}
 		Expect(cluster.Validate()).To(BeEmpty())
 	})
+
+	It("rejects disabling the rw service", func() {
+		cluster := newValidCluster()
+		cluster.Spec.Managed = &ManagedConfiguration{Services: &ManagedServices{
+			DisabledDefaultServices: []ServiceSelectorType{ServiceSelectorTypeRW},
+		}}
+		Expect(cluster.Validate()).NotTo(BeEmpty())
+	})
+
+	It("accepts disabling the ro service", func() {
+		cluster := newValidCluster()
+		cluster.Spec.Managed = &ManagedConfiguration{Services: &ManagedServices{
+			DisabledDefaultServices: []ServiceSelectorType{ServiceSelectorTypeRO},
+		}}
+		Expect(cluster.Validate()).To(BeEmpty())
+	})
+
+	It("rejects duplicate additional service names", func() {
+		cluster := newValidCluster()
+		cluster.Spec.Managed = &ManagedConfiguration{Services: &ManagedServices{
+			Additional: []ManagedService{
+				{Name: "lb", SelectorType: ServiceSelectorTypeRW},
+				{Name: "lb", SelectorType: ServiceSelectorTypeRO},
+			},
+		}}
+		Expect(cluster.Validate()).NotTo(BeEmpty())
+	})
+
+	It("rejects an additional service named after a default suffix", func() {
+		cluster := newValidCluster()
+		cluster.Spec.Managed = &ManagedConfiguration{Services: &ManagedServices{
+			Additional: []ManagedService{{Name: "rw", SelectorType: ServiceSelectorTypeRW}},
+		}}
+		Expect(cluster.Validate()).NotTo(BeEmpty())
+	})
+
+	It("accepts a valid additional service", func() {
+		cluster := newValidCluster()
+		cluster.Spec.Managed = &ManagedConfiguration{Services: &ManagedServices{
+			Additional: []ManagedService{{Name: "mysql-lb", SelectorType: ServiceSelectorTypeRW}},
+		}}
+		Expect(cluster.Validate()).To(BeEmpty())
+	})
 })
 
 var _ = Describe("Cluster helpers", func() {

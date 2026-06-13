@@ -74,7 +74,7 @@ CNMySQL creates three default Services:
 - `<cluster>-ro`: selects ready replicas.
 - `<cluster>-r`: selects any ready instance.
 
-Default Services can be disabled by name:
+Default Services can be disabled by name (the `rw` service cannot be disabled):
 
 ```yaml
 spec:
@@ -83,6 +83,62 @@ spec:
       disabledDefaultServices:
         - ro
 ```
+
+### Customising default services
+
+A shared `template` is merged onto the three default Services, letting you change
+their `type` and add labels and annotations. The operator always owns the
+selector and the `mysql:3306` port.
+
+```yaml
+spec:
+  managed:
+    services:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: my-app
+          annotations:
+            service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+        spec:
+          type: LoadBalancer
+```
+
+### Additional services
+
+You can declare extra Services routed to a role (`rw`, `ro`, or `r`). Each entry
+is rendered as `<cluster>-<name>` and carries its own template. `updateStrategy:
+patch` (default) merges your template onto the role defaults; `replace` swaps
+them entirely, keeping only the operator-owned selector, ports, and owner-tracking
+labels. Additional service names must be unique and must not collide with the
+default `rw`/`ro`/`r` names.
+
+```yaml
+spec:
+  managed:
+    services:
+      additional:
+        - name: mysql-lb
+          selectorType: rw
+          serviceTemplate:
+            spec:
+              type: LoadBalancer
+        - name: mysql-internal-read
+          selectorType: ro
+          updateStrategy: replace
+          serviceTemplate:
+            metadata:
+              labels:
+                pool: reporting
+            spec:
+              type: ClusterIP
+```
+
+The user-customisable spec fields are `type`, `externalTrafficPolicy`,
+`sessionAffinity`, `loadBalancerSourceRanges`, `externalName`, and
+`healthCheckNodePort`. The selector, ports, and `clusterIP` are operator-managed
+and cannot be overridden. Per-instance headless Services remain internal
+`ClusterIP: None` and are not user-configurable.
 
 Service routing is driven by Pod labels. The operator updates labels only after
 the database role change is considered safe, so client traffic follows the

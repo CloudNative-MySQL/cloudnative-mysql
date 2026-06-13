@@ -188,7 +188,49 @@ func (cluster *Cluster) Validate() field.ErrorList {
 	allErrs = append(allErrs, spec.validateBootstrap(specPath.Child("bootstrap"))...)
 	allErrs = append(allErrs, spec.validateReplica(specPath.Child("replica"))...)
 	allErrs = append(allErrs, spec.validateBackup(specPath.Child("backup"))...)
+	allErrs = append(allErrs, spec.validateManagedServices(specPath.Child("managed", "services"))...)
 
+	return allErrs
+}
+
+// validateManagedServices checks the user-defined service exposition: the rw
+// service cannot be disabled, additional service names must be unique, and
+// additional services must not collide with the default service name suffixes.
+func (spec *ClusterSpec) validateManagedServices(path *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+	if spec.Managed == nil || spec.Managed.Services == nil {
+		return allErrs
+	}
+	services := spec.Managed.Services
+
+	for i, disabled := range services.DisabledDefaultServices {
+		if disabled == ServiceSelectorTypeRW {
+			allErrs = append(allErrs, field.Invalid(
+				path.Child("disabledDefaultServices").Index(i), disabled,
+				"the rw service cannot be disabled"))
+		}
+	}
+
+	reserved := map[string]bool{"rw": true, "ro": true, "r": true}
+	seen := map[string]bool{}
+	for i := range services.Additional {
+		svc := &services.Additional[i]
+		svcPath := path.Child("additional").Index(i)
+		if svc.Name == "" {
+			allErrs = append(allErrs, field.Required(
+				svcPath.Child("name"), "additional service name is required"))
+			continue
+		}
+		if seen[svc.Name] {
+			allErrs = append(allErrs, field.Duplicate(svcPath.Child("name"), svc.Name))
+		}
+		seen[svc.Name] = true
+		if reserved[svc.Name] {
+			allErrs = append(allErrs, field.Invalid(
+				svcPath.Child("name"), svc.Name,
+				"additional service name collides with a default service name (rw, ro, r)"))
+		}
+	}
 	return allErrs
 }
 
