@@ -59,6 +59,24 @@ rules:
   - mysql.cloudnative-mysql.io
   resources:
   - backups
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+- apiGroups:
+  - mysql.cloudnative-mysql.io
+  resources:
+  - backups/status
+  - clusters/status
+  - scheduledbackups/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - mysql.cloudnative-mysql.io
+  resources:
   - clusterimagecatalogs
   - clusters
   - imagecatalogs
@@ -69,18 +87,19 @@ rules:
 - apiGroups:
   - mysql.cloudnative-mysql.io
   resources:
-  - backups/status
-  - clusters/status
+  - clusters/finalizers
   verbs:
-  - get
-  - patch
   - update
 - apiGroups:
   - mysql.cloudnative-mysql.io
   resources:
-  - clusters/finalizers
+  - scheduledbackups
   verbs:
+  - get
+  - list
+  - patch
   - update
+  - watch
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:
