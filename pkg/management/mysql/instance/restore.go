@@ -148,10 +148,37 @@ func Restore(ctx context.Context, opts RestoreOptions) error {
 		return fmt.Errorf("restore: data dir and backup dir are required")
 	}
 
+	// Base restore is idempotent on the data directory: once copy-back has run it
+	// is not repeated. Point-in-time replay, however, must still run on a retry
+	// (an init-container restart after copy-back leaves the data initialised but
+	// the binlogs un-replayed), so it lives outside this guard and is gated by its
+	// own sentinel below.
 	if IsInitialized(opts.DataDir) {
-		log.Info("Data directory already initialized")
-		return nil
+		log.Info("Data directory already initialized; skipping base restore")
+	} else if err := opts.restoreBase(ctx); err != nil {
+		return err
 	}
+
+	// 6. Point-in-time recovery: replay archived binlogs onto the restored data
+	// up to the recovery target. Enabled only when a source cluster is set; a
+	// plain M6 restore leaves the data at the base-backup point. Reentrant: a
+	// sentinel on the (durable) data directory makes a retry skip a completed
+	// replay rather than re-applying already-executed GTIDs.
+	if opts.SourceCluster != "" {
+		if err := opts.maybeReplay(ctx); err != nil {
+			return fmt.Errorf("replaying archived binlogs: %w", err)
+		}
+	}
+
+	log.Info("Completed restore from object store")
+	return nil
+}
+
+// restoreBase extracts, prepares and copy-backs the base backup into the data
+// directory, then resets the restored internal accounts to this cluster's
+// credentials. It runs only when the data directory is not yet initialised.
+func (opts RestoreOptions) restoreBase(ctx context.Context) error {
+	log := logf.FromContext(ctx).WithName("instance-restore")
 
 	compress := opts.Compress
 	var expectedSHA256 string
@@ -223,17 +250,6 @@ func Restore(ctx context.Context, opts RestoreOptions) error {
 			return fmt.Errorf("reconciling restored credentials: %w", err)
 		}
 	}
-
-	// 6. Point-in-time recovery: replay archived binlogs onto the restored data
-	// up to the recovery target. Enabled only when a source cluster is set; a
-	// plain M6 restore leaves the data at the base-backup point.
-	if opts.SourceCluster != "" {
-		if err := opts.replayBinlogs(ctx); err != nil {
-			return fmt.Errorf("replaying archived binlogs: %w", err)
-		}
-	}
-
-	log.Info("Completed restore from object store")
 	return nil
 }
 

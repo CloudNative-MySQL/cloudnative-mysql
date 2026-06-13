@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -32,8 +33,33 @@ import (
 )
 
 // binlogInfoFile is the XtraBackup artifact holding the base backup's binlog
-// position and GTID set — the anchor the replay starts from.
+// position and GTID set — the anchor the replay starts from. copy-back leaves a
+// copy in the data directory, so it survives an init-container restart even
+// though the scratch backup dir (an emptyDir) does not.
 const binlogInfoFile = "xtrabackup_binlog_info"
+
+// pitrSentinelFile marks, on the durable data directory, that point-in-time
+// replay has completed. It makes the replay reentrant: a retry skips it instead
+// of re-applying already-executed GTIDs (which mysqld rejects).
+const pitrSentinelFile = ".cnmysql-pitr-done"
+
+// maybeReplay runs the point-in-time replay unless a previous attempt already
+// completed it (sentinel present on the data directory).
+func (o *RestoreOptions) maybeReplay(ctx context.Context) error {
+	log := logf.FromContext(ctx).WithName("instance-pitr")
+	sentinel := filepath.Join(o.DataDir, pitrSentinelFile)
+	if _, err := os.Stat(sentinel); err == nil {
+		log.Info("Point-in-time replay already completed; skipping", "sentinel", sentinel)
+		return nil
+	}
+	if err := o.replayBinlogs(ctx); err != nil {
+		return err
+	}
+	if err := os.WriteFile(sentinel, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o640); err != nil {
+		return fmt.Errorf("pitr: writing completion sentinel: %w", err)
+	}
+	return nil
+}
 
 // replayBinlogs performs point-in-time recovery: it reads the base backup's
 // anchor GTID, loads the cluster archive index, plans the segments/files to
@@ -90,10 +116,15 @@ func (o *RestoreOptions) replayBinlogs(ctx context.Context) error {
 }
 
 // readAnchorGTID parses the base backup's xtrabackup_binlog_info for the GTID
-// set the restore landed at. A missing file (older XtraBackup, or no GTIDs yet)
-// yields an empty anchor, meaning replay from the very beginning.
+// set the restore landed at. It prefers the copy in the data directory (durable
+// on the PVC, so it survives an init-container restart that lost the scratch
+// backup dir) and falls back to the scratch dir. A missing file (older
+// XtraBackup, or no GTIDs yet) yields an empty anchor: replay from the start.
 func (o *RestoreOptions) readAnchorGTID() (string, error) {
-	content, err := os.ReadFile(filepath.Join(o.BackupDir, binlogInfoFile))
+	content, err := os.ReadFile(filepath.Join(o.DataDir, binlogInfoFile))
+	if os.IsNotExist(err) {
+		content, err = os.ReadFile(filepath.Join(o.BackupDir, binlogInfoFile))
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
