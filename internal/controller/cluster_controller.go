@@ -309,8 +309,18 @@ func (r *ClusterReconciler) reconcileSteadyState(ctx context.Context, cluster *m
 	}
 }
 
+func (r *ClusterReconciler) instanceControlClient() InstanceControlClient {
+	if r.ControlClient == nil {
+		r.ControlClient = &HTTPControlClient{Client: r.Client}
+	}
+	return r.ControlClient
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *ClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if r.ControlClient == nil {
+		r.ControlClient = &HTTPControlClient{Client: r.Client}
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&mysqlv1alpha1.Cluster{}).
 		Owns(&corev1.ConfigMap{}).

@@ -48,8 +48,9 @@ func (r *ClusterReconciler) reconcileManagedRoles(ctx context.Context, cluster *
 		return nil
 	}
 	log := logf.FromContext(ctx)
+	controlClient := r.instanceControlClient()
 
-	listed, err := r.ControlClient.ListUsers(ctx, cluster, primary)
+	listed, err := controlClient.ListUsers(ctx, cluster, primary)
 	if err != nil {
 		return fmt.Errorf("listing managed roles on %s: %w", primary, err)
 	}

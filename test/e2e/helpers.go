@@ -65,6 +65,7 @@ func generateTestNamespace(prefix string) string {
 func createTestNamespace(prefix string) string {
 	ns := generateTestNamespace(prefix)
 	By(fmt.Sprintf("creating test namespace %s", ns))
+	_, _ = kubectl("delete", "ns", ns, "--ignore-not-found", "--wait=true", "--timeout=120s")
 	_, err := kubectl("create", "ns", ns)
 	Expect(err).NotTo(HaveOccurred(), "Failed to create namespace %s", ns)
 	testNamespace = ns

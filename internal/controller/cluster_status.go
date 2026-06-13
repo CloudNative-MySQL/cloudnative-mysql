@@ -62,10 +62,7 @@ type observedCluster struct {
 // observe polls every desired instance and aggregates cluster-level readiness.
 // The cluster is Ready when all desired instances report ready.
 func (r *ClusterReconciler) observe(ctx context.Context, cluster *mysqlv1alpha1.Cluster, plan clusterPlan) (observedCluster, error) {
-	controlClient := r.ControlClient
-	if controlClient == nil {
-		controlClient = &HTTPControlClient{Client: r.Client}
-	}
+	controlClient := r.instanceControlClient()
 
 	observed := observedCluster{
 		Plan:             plan,

@@ -84,6 +84,32 @@ func TestReconcileManagedRolesCreatesMissingUserWithGeneratedPassword(t *testing
 	}
 }
 
+func TestReconcileManagedRolesDefaultsControlClient(t *testing.T) {
+	t.Parallel()
+	scheme := testScheme(t)
+	cluster := baseCluster()
+	cluster.Status.CurrentPrimary = testPrimary
+	r := &ClusterReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&mysqlv1alpha1.Cluster{}).
+			WithObjects(cluster).
+			Build(),
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(20),
+	}
+	cluster.Spec.Managed = &mysqlv1alpha1.ManagedConfiguration{Roles: []mysqlv1alpha1.RoleConfiguration{
+		{Name: appName, Host: "%", Ensure: mysqlv1alpha1.EnsurePresent},
+	}}
+
+	if err := r.reconcileManagedRoles(context.Background(), cluster); err == nil {
+		t.Fatal("reconcileManagedRoles returned nil error with no reachable control API")
+	}
+	if r.ControlClient == nil {
+		t.Fatal("ControlClient was not defaulted")
+	}
+}
+
 func TestReconcileManagedRolesDropsAbsentUser(t *testing.T) {
 	t.Parallel()
 	control := &recordingControlClient{

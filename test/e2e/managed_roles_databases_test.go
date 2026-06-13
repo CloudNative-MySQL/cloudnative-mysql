@@ -31,8 +31,11 @@ var _ = Describe("Managed roles and databases", Ordered, func() {
 		dbUserSec  = "appdb-user"
 	)
 
+	var ns, prevNS string
+
 	BeforeAll(func() {
-		createTestNamespace("mrdb")
+		prevNS = testNamespace
+		ns = createTestNamespace("mrdb")
 
 		By("creating a cluster with a managed role")
 		applyManifest(cluster, managedRoleClusterManifest(cluster, roleName))
@@ -120,6 +123,10 @@ var _ = Describe("Managed roles and databases", Ordered, func() {
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(strings.TrimSpace(out)).To(BeEmpty(), "schema was not reclaimed on delete")
 		}, 2*time.Minute, 5*time.Second).Should(Succeed())
+	})
+
+	AfterAll(func() {
+		deleteTestNamespace(ns, prevNS)
 	})
 })
 
