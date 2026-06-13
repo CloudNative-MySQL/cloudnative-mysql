@@ -42,6 +42,9 @@ const (
 	// DefaultShutdownDelay is the default maximum shutdown delay, in seconds.
 	DefaultShutdownDelay = 1800
 
+	// DefaultSmartShutdownTimeout is the default smart shutdown timeout, in seconds.
+	DefaultSmartShutdownTimeout = 180
+
 	// DefaultSwitchoverDelay is the default maximum switchover delay, in seconds.
 	DefaultSwitchoverDelay = 3600
 )
@@ -202,6 +205,14 @@ type ClusterSpec struct {
 	// +kubebuilder:default:=1800
 	// +optional
 	MaxStopDelay int32 `json:"maxStopDelay,omitempty"`
+
+	// SmartShutdownTimeout is the time in seconds reserved for a "smart"
+	// (graceful) shutdown attempt before falling back to a "fast" shutdown.
+	// Must be lower than maxStopDelay; the remaining time is used for the
+	// fast/immediate fallback. Defaults to 180.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	SmartShutdownTimeout *int32 `json:"smartShutdownTimeout,omitempty"`
 
 	// MaxSwitchoverDelay is the time in seconds allowed for a switchover to
 	// complete before being considered failed.

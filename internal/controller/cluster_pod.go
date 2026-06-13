@@ -28,9 +28,11 @@ import (
 )
 
 func (r *ClusterReconciler) podSpec(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instancePlan) corev1.PodSpec {
+	gracePeriod := int64(cluster.GetMaxStopDelay())
 	podSpec := corev1.PodSpec{
-		RestartPolicy:      corev1.RestartPolicyAlways,
-		ServiceAccountName: plan.InstanceServiceAccount,
+		RestartPolicy:                 corev1.RestartPolicyAlways,
+		TerminationGracePeriodSeconds: &gracePeriod,
+		ServiceAccountName:            plan.InstanceServiceAccount,
 		Volumes: []corev1.Volume{
 			{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: inst.PVCName}}},
 			{Name: "run", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
@@ -242,6 +244,10 @@ func runArgs(cluster *mysqlv1alpha1.Cluster, _ clusterPlan, _ instancePlan) []st
 			fmt.Sprintf("--archive-rpo-seconds=%d", archiveRPOSeconds(cluster)),
 		)
 	}
+	args = append(args,
+		fmt.Sprintf("--stop-delay=%d", cluster.GetMaxStopDelay()),
+		fmt.Sprintf("--smart-shutdown-timeout=%d", cluster.GetSmartShutdownTimeout()),
+	)
 	return args
 }
 

@@ -85,6 +85,95 @@ func TestSupervisorKillsAfterTimeout(t *testing.T) {
 	}
 }
 
+func TestSupervisorShutdownGracefulCleanExit(t *testing.T) {
+	// sleep exits on SIGTERM within the smart budget, so SIGKILL is not needed.
+	s := NewProcessSupervisor("/bin/sleep", []string{"60"})
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	killed, err := s.ShutdownGraceful(2*time.Second, 5*time.Second)
+	if err != nil {
+		t.Fatalf("ShutdownGraceful: %v", err)
+	}
+	if killed {
+		t.Error("expected a graceful exit, but the process was killed")
+	}
+	if s.Running() {
+		t.Error("expected Running() false after ShutdownGraceful")
+	}
+}
+
+func TestSupervisorShutdownGracefulForcesKill(t *testing.T) {
+	// A process that ignores SIGTERM must be killed once the hard stop delay
+	// elapses, not at the smart budget.
+	s := NewProcessSupervisor("/bin/sh", []string{"-c", "trap '' TERM; while true; do sleep 1; done"})
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// Let the shell install its SIGTERM trap before we signal it.
+	time.Sleep(200 * time.Millisecond)
+
+	start := time.Now()
+	killed, err := s.ShutdownGraceful(200*time.Millisecond, 600*time.Millisecond)
+	if err != nil {
+		t.Fatalf("ShutdownGraceful: %v", err)
+	}
+	if !killed {
+		t.Error("expected the process to be force-killed")
+	}
+	elapsed := time.Since(start)
+	if elapsed < 600*time.Millisecond {
+		t.Errorf("kill happened too early at %s; should wait the hard stop delay", elapsed)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("shutdown took too long: %s", elapsed)
+	}
+}
+
+func TestSupervisorShutdownGracefulWithConcurrentWaiter(t *testing.T) {
+	// The run loop parks a goroutine on Wait() for the whole process lifetime.
+	// The exit must be observable by both that watcher and the shutdown path;
+	// a single-delivery channel would let one starve the other and wedge PID1.
+	s := NewProcessSupervisor("/bin/sleep", []string{"60"})
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	waiterDone := make(chan error, 1)
+	go func() { waiterDone <- s.Wait() }()
+
+	shutdownDone := make(chan error, 1)
+	go func() {
+		_, err := s.ShutdownGraceful(2*time.Second, 5*time.Second)
+		shutdownDone <- err
+	}()
+
+	// ShutdownGraceful treats the SIGTERM exit as clean (nil).
+	select {
+	case err := <-shutdownDone:
+		if err != nil {
+			t.Errorf("ShutdownGraceful: unexpected error: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("ShutdownGraceful never observed the process exit (single-delivery starvation)")
+	}
+
+	// The concurrent Wait() must also return; it surfaces the raw signal exit.
+	select {
+	case <-waiterDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("concurrent Wait() never observed the process exit (single-delivery starvation)")
+	}
+}
+
+func TestSupervisorShutdownGracefulWhenNotRunning(t *testing.T) {
+	s := NewProcessSupervisor("/bin/sleep", []string{"1"})
+	if killed, err := s.ShutdownGraceful(time.Second, 2*time.Second); err != nil || killed {
+		t.Errorf("ShutdownGraceful on non-running supervisor should be a no-op, got killed=%v err=%v", killed, err)
+	}
+}
+
 func TestSupervisorRestart(t *testing.T) {
 	s := NewProcessSupervisor("/bin/sleep", []string{"60"}, WithShutdownTimeout(2*time.Second))
 	if err := s.Start(context.Background()); err != nil {

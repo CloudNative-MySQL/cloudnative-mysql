@@ -27,6 +27,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-logr/logr"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/instance/rolereconciler"
@@ -79,6 +80,12 @@ type RunOptions struct {
 	TLS webserver.TLSOptions
 	// ShutdownTimeout bounds the graceful mysqld shutdown.
 	ShutdownTimeout time.Duration
+	// StopDelay is the maximum time in seconds allowed for complete Pod stop.
+	// Maps to Kubernetes TerminationGracePeriodSeconds.
+	StopDelay time.Duration
+	// SmartShutdownTimeout is the time reserved for a graceful (innodb_fast_shutdown=1)
+	// shutdown attempt before the fallback to SIGKILL.
+	SmartShutdownTimeout time.Duration
 	// ReadyTimeout bounds waiting for the control connection after start.
 	ReadyTimeout time.Duration
 }
@@ -89,6 +96,14 @@ func (o *RunOptions) applyDefaults() {
 	}
 	if o.ShutdownTimeout == 0 {
 		o.ShutdownTimeout = DefaultShutdownTimeout
+	}
+	if o.StopDelay == 0 {
+		o.StopDelay = DefaultShutdownTimeout
+	}
+	// The smart (clean) shutdown budget must sit below the hard stop delay so
+	// there is headroom for the forced SIGKILL fallback within the Pod's grace.
+	if o.SmartShutdownTimeout == 0 || o.SmartShutdownTimeout >= o.StopDelay {
+		o.SmartShutdownTimeout = o.StopDelay / 2
 	}
 	if o.ReadyTimeout == 0 {
 		o.ReadyTimeout = 120 * time.Second
@@ -284,7 +299,12 @@ func Run(ctx context.Context, opts RunOptions) error {
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
 	_ = healthSrv.Shutdown(shutdownCtx)
-	_ = sup.Shutdown(shutdownCtx)
+
+	// Close the control connection before shutting down mysqld so the
+	// graceful COM_QUIT handshake completes while the server is still alive.
+	// The deferred close in the early-return paths is a no-op afterwards.
+	_ = db.Close()
+	shutdownMysqld(log, sup, opts)
 
 	return runErr
 }
@@ -329,6 +349,33 @@ func servePlain(srv *http.Server) error {
 		return nil
 	}
 	return err
+}
+
+// shutdownMysqld performs a two-phase shutdown of the mysqld process: SIGTERM
+// triggers a clean (innodb_fast_shutdown=1) shutdown, which is given up to
+// SmartShutdownTimeout to finish; if it overruns, mysqld keeps shutting down
+// until StopDelay before being forced down with SIGKILL (crash recovery on the
+// next start). StopDelay matches the Pod's TerminationGracePeriodSeconds, so the
+// kubelet does not SIGKILL the Pod out from under us first.
+func shutdownMysqld(
+	log logr.Logger,
+	sup *ProcessSupervisor,
+	opts RunOptions,
+) {
+	log.Info("Requesting mysqld shutdown",
+		"smartShutdownTimeout", opts.SmartShutdownTimeout,
+		"stopDelay", opts.StopDelay)
+
+	killed, err := sup.ShutdownGraceful(opts.SmartShutdownTimeout, opts.StopDelay)
+	switch {
+	case err != nil:
+		log.Error(err, "Mysqld shutdown returned an error")
+	case killed:
+		log.Info("Mysqld did not stop within the stop delay; forced an immediate shutdown",
+			"stopDelay", opts.StopDelay)
+	default:
+		log.Info("Mysqld stopped gracefully")
+	}
 }
 
 // openControl opens the control connection, retrying until ready.

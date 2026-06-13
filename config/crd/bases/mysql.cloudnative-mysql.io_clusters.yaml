@@ -2828,6 +2828,15 @@ spec:
                         type: string
                     type: object
                 type: object
+              smartShutdownTimeout:
+                description: |-
+                  SmartShutdownTimeout is the time in seconds reserved for a "smart"
+                  (graceful) shutdown attempt before falling back to a "fast" shutdown.
+                  Must be lower than maxStopDelay; the remaining time is used for the
+                  fast/immediate fallback. Defaults to 180.
+                format: int32
+                minimum: 0
+                type: integer
               storage:
                 description: Storage configuration for the instance data directory.
                 properties:

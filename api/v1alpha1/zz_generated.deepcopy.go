@@ -507,6 +507,11 @@ func (in *ClusterSpec) DeepCopyInto(out *ClusterSpec) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.SmartShutdownTimeout != nil {
+		in, out := &in.SmartShutdownTimeout, &out.SmartShutdownTimeout
+		*out = new(int32)
+		**out = **in
+	}
 	if in.Backup != nil {
 		in, out := &in.Backup, &out.Backup
 		*out = new(BackupConfiguration)

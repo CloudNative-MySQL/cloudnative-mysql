@@ -21,8 +21,10 @@ package instance
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/pool"
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/replication"
@@ -219,15 +221,29 @@ func (c *Controller) Restart(ctx context.Context) error {
 	return c.supervisor.Restart(ctx)
 }
 
-// Shutdown stops mysqld via the supervisor. The PID1 run loop then exits and the
-// Pod (RestartPolicy: Always) restarts clean. Used as the fallback when a live
-// demotion of a former primary fails.
+// Shutdown stops mysqld via the supervisor. It sets innodb_fast_shutdown=2 for
+// the fastest possible shutdown (just flush logs, crash recovery on next start)
+// with a short timeout. Used as the fallback when a live demotion of a former
+// primary fails.
 func (c *Controller) Shutdown(ctx context.Context) error {
 	if c.supervisor == nil {
 		return errors.New("shutdown is not available: no supervisor configured")
 	}
 	logf.FromContext(ctx).WithName("instance-controller").Info("Shutting down mysqld", "instance", c.name)
+	fastCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_ = setInnodbFastShutdown(fastCtx, c.conn, 2)
 	return c.supervisor.Shutdown(ctx)
+}
+
+// setInnodbFastShutdown sets the innodb_fast_shutdown variable before mysqld
+// termination. 0 = slow (full purge/merge), 1 = skip purge/merge (default),
+// 2 = just flush logs (fastest, crash recovery on next start).
+func setInnodbFastShutdown(ctx context.Context, conn interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}, value int) error {
+	_, err := conn.ExecContext(ctx, "SET GLOBAL innodb_fast_shutdown = ?", value)
+	return err
 }
 
 // role derives the reported role from the replica state.

@@ -63,6 +63,15 @@ func (cluster *Cluster) SetDefaults() {
 		spec.MaxStopDelay = DefaultShutdownDelay
 	}
 
+	if spec.SmartShutdownTimeout == nil {
+		spec.SmartShutdownTimeout = ptrTo(int32(DefaultSmartShutdownTimeout))
+	}
+	// The smart shutdown must finish before the hard stop delay so there is
+	// headroom for the forced fallback; clamp it if it was set too high.
+	if *spec.SmartShutdownTimeout >= spec.MaxStopDelay {
+		spec.SmartShutdownTimeout = ptrTo(spec.MaxStopDelay / 2)
+	}
+
 	if spec.MaxSwitchoverDelay == 0 {
 		spec.MaxSwitchoverDelay = DefaultSwitchoverDelay
 	}
@@ -281,6 +290,23 @@ func (cluster *Cluster) GetEnableSuperuserAccess() bool {
 func (cluster *Cluster) IsReplica() bool {
 	return cluster.Spec.Replica != nil &&
 		(cluster.Spec.Replica.Enabled == nil || *cluster.Spec.Replica.Enabled)
+}
+
+// GetMaxStopDelay returns the amount of time in seconds MySQL has to stop.
+func (cluster *Cluster) GetMaxStopDelay() int32 {
+	if cluster.Spec.MaxStopDelay > 0 {
+		return cluster.Spec.MaxStopDelay
+	}
+	return DefaultShutdownDelay
+}
+
+// GetSmartShutdownTimeout returns the timeout reserved for a smart (graceful)
+// shutdown attempt before falling back to fast shutdown.
+func (cluster *Cluster) GetSmartShutdownTimeout() int32 {
+	if cluster.Spec.SmartShutdownTimeout != nil {
+		return *cluster.Spec.SmartShutdownTimeout
+	}
+	return int32(DefaultSmartShutdownTimeout)
 }
 
 // ptrTo returns a pointer to the given value.
