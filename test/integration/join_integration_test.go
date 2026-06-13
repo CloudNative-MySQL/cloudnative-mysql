@@ -20,6 +20,7 @@ package integration
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"testing"
 	"time"
@@ -106,9 +107,20 @@ exec /usr/sbin/mysqld --datadir=$REP --socket=/tmp/rep.sock --port=3307 --server
 		return pool.Config{Host: host, Port: int(mapped.Num()), User: appUser, Password: appPass, Database: "app"}
 	}
 
-	replicaDB, err := pool.Open(ctx, open("3307"))
-	if err != nil {
-		t.Fatalf("connecting to replica: %v", err)
+	var replicaDB *sql.DB
+	{
+		cfg := open("3307")
+		deadline := time.Now().Add(90 * time.Second)
+		for {
+			replicaDB, err = pool.Open(ctx, cfg)
+			if err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("connecting to replica: %v", err)
+			}
+			time.Sleep(time.Second)
+		}
 	}
 	t.Cleanup(func() { _ = replicaDB.Close() })
 
@@ -120,9 +132,20 @@ exec /usr/sbin/mysqld --datadir=$REP --socket=/tmp/rep.sock --port=3307 --server
 	})
 
 	// A new write on the source must replicate to the joined replica.
-	sourceDB, err := pool.Open(ctx, open("3306"))
-	if err != nil {
-		t.Fatalf("connecting to source: %v", err)
+	var sourceDB *sql.DB
+	{
+		cfg := open("3306")
+		deadline := time.Now().Add(90 * time.Second)
+		for {
+			sourceDB, err = pool.Open(ctx, cfg)
+			if err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("connecting to source: %v", err)
+			}
+			time.Sleep(time.Second)
+		}
 	}
 	t.Cleanup(func() { _ = sourceDB.Close() })
 

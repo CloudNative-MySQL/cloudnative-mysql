@@ -20,6 +20,7 @@ package integration
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"testing"
 	"time"
@@ -65,7 +66,7 @@ exec /usr/sbin/mysqld --datadir=/var/lib/mysql --socket=/var/run/mysqld/mysqld.s
 		Env:          map[string]string{"MYSQL_ROOT_PASSWORD": rootPassword, "MYSQL_APP_PASSWORD": appPass},
 		Entrypoint:   []string{"bash", "-lc"},
 		Cmd:          []string{script},
-		WaitingFor:   wait.ForListeningPort("3306/tcp").WithStartupTimeout(5 * time.Minute),
+		WaitingFor:   wait.ForLog("ready for connections").WithStartupTimeout(5 * time.Minute),
 	}
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
@@ -86,15 +87,26 @@ exec /usr/sbin/mysqld --datadir=/var/lib/mysql --socket=/var/run/mysqld/mysqld.s
 		t.Fatal(err)
 	}
 
-	db, err := pool.Open(ctx, pool.Config{
+	cfg := pool.Config{
 		Host:     host,
 		Port:     int(mapped.Num()),
 		User:     appUser,
 		Password: appPass,
 		Database: appDB,
-	})
-	if err != nil {
-		t.Fatalf("connecting as application user: %v", err)
+	}
+	// The container log "ready for connections" appears during startup but the
+	// connection may still be briefly refused; retry for up to 90 seconds.
+	var db *sql.DB
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		db, err = pool.Open(ctx, cfg)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("connecting as application user: %v", err)
+		}
+		time.Sleep(time.Second)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
