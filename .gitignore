@@ -32,3 +32,8 @@ go.work
 # Local dev files
 references/
 .kilo/kilo.json
+
+# Documentation build output and local dependencies
+docs/build/
+docs/.docusaurus/
+docs/node_modules/

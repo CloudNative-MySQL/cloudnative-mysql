@@ -113,6 +113,33 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	"$(GOLANGCI_LINT)" config verify
 
+##@ Documentation
+
+NPM ?= npm
+PYTHON ?= python3
+DOCUSAURUS_DOCKER_IMAGE ?= node:22-bookworm
+DOCS_PORT ?= 1313
+
+.PHONY: docs-install
+docs-install: ## Install Docusaurus documentation dependencies.
+	NO_UPDATE_NOTIFIER=1 $(NPM) --prefix docs install
+
+.PHONY: docs-build
+docs-build: ## Build the Docusaurus documentation site.
+	NO_UPDATE_NOTIFIER=1 $(NPM) --prefix docs run build
+
+.PHONY: docs-serve
+docs-serve: docs-build ## Serve the built Docusaurus documentation site locally.
+	cd docs/build && $(PYTHON) -m http.server $(DOCS_PORT) --bind 0.0.0.0
+
+.PHONY: docs-dev
+docs-dev: ## Run the Docusaurus hot-reload development server.
+	BROWSER=none NO_UPDATE_NOTIFIER=1 $(NPM) --prefix docs run start -- --host 0.0.0.0 --port $(DOCS_PORT)
+
+.PHONY: docs-serve-docker
+docs-serve-docker: ## Serve Docusaurus docs through Docker when Node dependencies are not installed locally.
+	$(CONTAINER_TOOL) run --rm -p $(DOCS_PORT):$(DOCS_PORT) -v "$(CURDIR)/docs:/src" -w /src -e BROWSER=none -e NO_UPDATE_NOTIFIER=1 $(DOCUSAURUS_DOCKER_IMAGE) sh -lc 'npm install && npm run build && cd build && python3 -m http.server $(DOCS_PORT) --bind 0.0.0.0'
+
 ##@ Build
 
 .PHONY: build
