@@ -43,7 +43,21 @@ const (
 	EnvAccessKeyID      = "CNMYSQL_S3_ACCESS_KEY_ID"
 	EnvSecretAccessKey  = "CNMYSQL_S3_SECRET_ACCESS_KEY"
 	EnvSessionToken     = "CNMYSQL_S3_SESSION_TOKEN"
+	// EnvBucket and EnvPath carry the (non-secret) destination bucket and key
+	// prefix. The continuous archiver reads these to know where to ship binlogs;
+	// the one-shot backup worker still takes them as flags.
+	EnvBucket = "CNMYSQL_S3_BUCKET"
+	EnvPath   = "CNMYSQL_S3_PATH"
 )
+
+// StoreFromEnv builds an S3ObjectStore destination (bucket + path) from the
+// environment. Endpoint/credentials come separately via ConfigFromEnv.
+func StoreFromEnv() mysqlv1alpha1.S3ObjectStore {
+	return mysqlv1alpha1.S3ObjectStore{
+		Bucket: os.Getenv(EnvBucket),
+		Path:   os.Getenv(EnvPath),
+	}
+}
 
 // Config describes how to reach an S3-compatible object store.
 type Config struct {
@@ -216,6 +230,19 @@ func (c *Client) IsEmptyPrefix(ctx context.Context, bucket, prefix string) (bool
 		return false, fmt.Errorf("listing s3://%s/%s: %w", bucket, prefix, object.Err)
 	}
 	return false, nil
+}
+
+// Exists reports whether bucket/key exists. A not-found response is reported as
+// (false, nil); any other error is returned.
+func (c *Client) Exists(ctx context.Context, bucket, key string) (bool, error) {
+	_, err := c.mc.StatObject(ctx, bucket, key, minio.StatObjectOptions{})
+	if err == nil {
+		return true, nil
+	}
+	if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+		return false, nil
+	}
+	return false, fmt.Errorf("stat s3://%s/%s: %w", bucket, key, err)
 }
 
 // GetJSON downloads bucket/key and unmarshals it into v.

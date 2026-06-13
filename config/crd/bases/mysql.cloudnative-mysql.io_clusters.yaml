@@ -1050,6 +1050,44 @@ spec:
                 description: Backup configures continuous archiving and the object
                   store target.
                 properties:
+                  continuousArchiving:
+                    description: |-
+                      ContinuousArchiving configures continuous binary-log archiving to the
+                      object store, the foundation for point-in-time recovery. Disabled by
+                      default.
+                    properties:
+                      binlogExpireSeconds:
+                        default: 604800
+                        description: |-
+                          BinlogExpireSeconds is the conservative backstop after which mysqld may
+                          expire a binary log, applied under the active purge gate. Defaults to
+                          604800 (7 days).
+                        format: int32
+                        minimum: 0
+                        type: integer
+                      enabled:
+                        default: false
+                        description: Enabled turns continuous binlog archiving on.
+                          Requires Backup.ObjectStore.
+                        type: boolean
+                      maxBinlogSizeMB:
+                        default: 16
+                        description: |-
+                          MaxBinlogSizeMB caps the active binary log before mysqld rotates it,
+                          bounding the size-based RPO and per-object size. Defaults to 16 MiB.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      targetRPOSeconds:
+                        default: 300
+                        description: |-
+                          TargetRPOSeconds bounds the recovery point objective: the primary forces a
+                          binary-log rotation at least this often so a low-write cluster still
+                          archives promptly. Defaults to 300 (5 minutes).
+                        format: int32
+                        minimum: 10
+                        type: integer
+                    type: object
                   objectStore:
                     description: |-
                       ObjectStore is the S3-compatible destination for backups and binlog
@@ -3274,6 +3312,41 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              continuousArchiving:
+                description: |-
+                  ContinuousArchiving reports the health of continuous binlog archiving when
+                  it is enabled.
+                properties:
+                  enabled:
+                    description: Enabled mirrors whether continuous archiving is configured
+                      on.
+                    type: boolean
+                  lastArchivedBinlog:
+                    description: |-
+                      LastArchivedBinlog is the most recent binary-log file shipped by the
+                      current primary.
+                    type: string
+                  lastArchivedGTID:
+                    description: LastArchivedGTID is the last GTID covered by the
+                      archive.
+                    type: string
+                  lastArchivedTime:
+                    description: LastArchivedTime is when the most recent file finished
+                      archiving.
+                    type: string
+                  lastFailureReason:
+                    description: |-
+                      LastFailureReason and LastFailureTime record the most recent archiving
+                      failure on the current primary, if any.
+                    type: string
+                  lastFailureTime:
+                    type: string
+                  pendingFiles:
+                    description: |-
+                      PendingFiles is the number of rotated binary logs not yet archived
+                      (archive lag). A growing value means the archiver is falling behind.
+                    type: integer
+                type: object
               currentPrimary:
                 description: CurrentPrimary is the name of the instance currently
                   acting as primary.

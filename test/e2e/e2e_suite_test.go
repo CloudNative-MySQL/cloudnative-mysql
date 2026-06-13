@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -36,36 +37,82 @@ func TestE2E(t *testing.T) {
 	RunSpecs(t, "e2e suite")
 }
 
-var _ = BeforeSuite(func() {
+// SynchronizedBeforeSuite runs the one-time shared setup (image builds, operator
+// deployment) on Ginkgo parallel process 1 only, then runs the per-process wait
+// on every process so they all see a ready operator before any spec runs.
+var _ = SynchronizedBeforeSuite(func() []byte {
+	doSuiteSetup()
+	return nil
+}, func([]byte) {
+	By("waiting for the operator to be ready")
+	Eventually(func() string {
+		out, err := kubectl("get", "pods", "-l", "control-plane=controller-manager",
+			"-n", namespace, "-o", "jsonpath={.items[*].status.phase}")
+		if err != nil {
+			return ""
+		}
+		return out
+	}, 5*time.Minute, 5*time.Second).Should(ContainSubstring("Running"),
+		"controller-manager did not become ready")
+})
+
+// SynchronizedAfterSuite tears down the operator and cert-manager on process 1
+// only, after every parallel process has finished its specs.
+var _ = SynchronizedAfterSuite(func() {
+	// Per-process teardown (no-op — each spec handles its own namespace cleanup).
+}, func() {
+	undeployOperator()
+	teardownCertManager()
+})
+
+// doSuiteSetup is the one-time shared setup that runs on Ginkgo parallel
+// process 1 only, via SynchronizedBeforeSuite.
+func doSuiteSetup() {
 	By("building the manager image")
 	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", managerImage))
 	_, err := utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager image")
 
-	// TODO(user): If you want to change the e2e test vendor from Kind,
-	// ensure the image is built and available, then remove the following block.
 	By("loading the manager image on Kind")
 	err = utils.LoadImageToKindClusterWithName(managerImage)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")
 
-	By("building the instance image")
-	cmd = exec.Command("make", "docker-build-instance", "INSTANCE_VERSION=8.4")
-	_, err = utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the instance image")
-
-	By("loading the instance image on Kind")
-	err = utils.LoadImageToKindClusterWithName(instanceImage)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the instance image into Kind")
+	for _, version := range neededInstanceVersions() {
+		buildAndLoadInstanceImage(version)
+	}
 
 	configureKubectlKubeRC()
 	setupCertManager()
 	deployOperator()
-})
+}
 
-var _ = AfterSuite(func() {
-	undeployOperator()
-	teardownCertManager()
-})
+// buildAndLoadInstanceImage builds this version's slim instance image and loads
+// it into the Kind cluster, so a Cluster pinned to cnmysql-instance:<version>
+// boots without pulling from a registry.
+func buildAndLoadInstanceImage(version string) {
+	By(fmt.Sprintf("building the instance image (%s)", version))
+	cmd := exec.Command("make", "docker-build-instance", "INSTANCE_VERSION="+version)
+	_, err := utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the instance image for %s", version)
+
+	By(fmt.Sprintf("loading the instance image on Kind (%s)", version))
+	err = utils.LoadImageToKindClusterWithName(instanceImageFor(version))
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the instance image for %s into Kind", version)
+}
+
+// neededInstanceVersions is the deduplicated set of instance versions the suite
+// builds: 8.4 (the sample Cluster spec) plus every archiving-matrix version.
+func neededInstanceVersions() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, v := range append([]string{"8.4"}, archiveVersions()...) {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
+}
 
 // deployOperator installs the CRDs and deploys the controller-manager once for
 // the whole suite, so every Describe can exercise it without re-deploying.

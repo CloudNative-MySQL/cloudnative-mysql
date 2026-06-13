@@ -17,7 +17,7 @@ limitations under the License.
 // Package config renders the mysqld configuration (my.cnf) for a CNMySQL
 // instance. The operator owns a set of replication- and TLS-critical keys; user
 // supplied parameters may not override them. Rendering is version-aware to cope
-// with keyword differences between MySQL 5.6/5.7 and 8.0+.
+// with keyword differences between MySQL 5.7 and 8.0+.
 package config
 
 import (
@@ -96,8 +96,27 @@ type ServerConfig struct {
 	TLS TLSPaths
 	// SemiSync configures semi-synchronous replication.
 	SemiSync SemiSync
+	// Archiving configures continuous binary-log archiving durability/RPO
+	// settings. Rendered only when enabled.
+	Archiving Archiving
 	// UserParameters are operator-validated user my.cnf settings.
 	UserParameters map[string]string
+}
+
+// Archiving configures the binary-log settings continuous archiving relies on.
+// log_bin, gtid_mode, enforce_gtid_consistency and log_replica_updates are
+// always rendered (they are replication requirements); these settings add the
+// durability and RPO knobs archiving needs on top.
+type Archiving struct {
+	// Enabled renders the archiving-specific binary-log settings.
+	Enabled bool
+	// MaxBinlogSizeMB caps the active binary log before mysqld rotates it,
+	// bounding the size-based RPO. 0 leaves the server default.
+	MaxBinlogSizeMB int
+	// BinlogExpireSeconds is the conservative backstop after which mysqld may
+	// expire a binary log, applied under the active purge gate. 0 leaves the
+	// server default.
+	BinlogExpireSeconds int
 }
 
 // managedKeys are the [mysqld] keys the operator fully controls. Users may not
@@ -132,6 +151,12 @@ var managedKeys = map[string]struct{}{
 	"ssl-key":                  {},
 	"binlog_format":            {},
 	"binlog-format":            {},
+	// Continuous-archiving durability/RPO knobs. Owned by the operator so a user
+	// override cannot undermine the archive's durability guarantees.
+	"sync_binlog":                {},
+	"max_binlog_size":            {},
+	"binlog_expire_logs_seconds": {},
+	"expire_logs_days":           {},
 }
 
 // normalizeKey lowercases and converts dashes to underscores so that the
@@ -290,7 +315,35 @@ func (c *ServerConfig) managedSettings(ver version.Version) []pair {
 		}
 	}
 
+	if c.Archiving.Enabled {
+		// sync_binlog=1 makes every committed transaction durable in the binary
+		// log before the archiver can ship it; without it a crash could lose
+		// acknowledged transactions that were never written to disk.
+		pairs = append(pairs, pair{"sync_binlog", "1"})
+		if c.Archiving.MaxBinlogSizeMB > 0 {
+			pairs = append(pairs, pair{
+				"max_binlog_size",
+				strconv.Itoa(c.Archiving.MaxBinlogSizeMB * 1024 * 1024),
+			})
+		}
+		if c.Archiving.BinlogExpireSeconds > 0 {
+			key, value := binlogExpire(ver, c.Archiving.BinlogExpireSeconds)
+			pairs = append(pairs, pair{key, value})
+		}
+	}
+
 	return pairs
+}
+
+// binlogExpire returns the version-appropriate binlog expiry variable and
+// value. binlog_expire_logs_seconds was added in 8.0; older servers use the
+// coarser expire_logs_days, so the seconds value is rounded up to whole days.
+func binlogExpire(ver version.Version, seconds int) (string, string) {
+	if ver.AtLeast(8, 0, 0) {
+		return "binlog_expire_logs_seconds", strconv.Itoa(seconds)
+	}
+	days := max((seconds+86399)/86400, 1)
+	return "expire_logs_days", strconv.Itoa(days)
 }
 
 type pair struct {

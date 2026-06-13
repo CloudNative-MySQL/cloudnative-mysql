@@ -76,8 +76,21 @@ type recoveryPlan struct {
 	ArchiveKey  string
 	MetadataKey string
 	// StoreEnv carries the CNMYSQL_S3_* environment (endpoint, region, signing,
-	// credentials) the restore worker needs to reach the object store.
+	// credentials, bucket, path) the restore worker needs to reach the object
+	// store and reconstruct binlog archive keys.
 	StoreEnv []corev1.EnvVar
+
+	// The fields below drive point-in-time recovery (M7.2). HasTarget is set when
+	// spec.bootstrap.recovery.recoveryTarget is present; the restore worker then
+	// replays archived binlogs from SourceCluster's archive up to the target.
+	HasTarget       bool
+	SourceCluster   string
+	TargetTime      string
+	TargetGTID      string
+	TargetImmediate bool
+	// Store is the resolved (defaulted) recovery object store, used by the
+	// operator's up-front recovery-target satisfiability check.
+	Store mysqlv1alpha1.S3ObjectStore
 }
 
 // instancePlan holds the per-instance derived names and identity.
@@ -135,7 +148,6 @@ func instanceName(cluster *mysqlv1alpha1.Cluster, ordinal int) string {
 }
 
 const (
-	defaultMySQL56ServerVersion = "5.6.51"
 	defaultMySQL80ServerVersion = "8.0.46"
 	defaultMySQL84ServerVersion = "8.4.0"
 	defaultMySQL9xServerVersion = "9.6.0"
@@ -267,12 +279,30 @@ func (r *ClusterReconciler) resolveRecovery(
 	if err != nil {
 		return nil, err
 	}
-	return &recoveryPlan{
-		Bucket:      store.Bucket,
-		ArchiveKey:  keys.ArchiveKey,
-		MetadataKey: keys.MetadataKey,
-		StoreEnv:    backupObjectStoreEnv(*store),
-	}, nil
+
+	// The binlog archive is partitioned under the source cluster's prefix; the
+	// restore worker reconstructs its keys from the bucket/path env plus this name.
+	sourceCluster := backup.Spec.Cluster.Name
+	storeEnv := append(backupObjectStoreEnv(*store),
+		corev1.EnvVar{Name: objectstore.EnvBucket, Value: store.Bucket},
+		corev1.EnvVar{Name: objectstore.EnvPath, Value: store.Path},
+	)
+
+	plan := &recoveryPlan{
+		Bucket:        store.Bucket,
+		ArchiveKey:    keys.ArchiveKey,
+		MetadataKey:   keys.MetadataKey,
+		StoreEnv:      storeEnv,
+		SourceCluster: sourceCluster,
+		Store:         *store,
+	}
+	if target := rec.RecoveryTarget; target != nil {
+		plan.HasTarget = true
+		plan.TargetTime = target.TargetTime
+		plan.TargetGTID = target.TargetGTID
+		plan.TargetImmediate = target.TargetImmediate != nil && *target.TargetImmediate
+	}
+	return plan, nil
 }
 
 // recoveryObjectStore picks the object store to recover from: the Backup's own
@@ -334,8 +364,6 @@ func (r *ClusterReconciler) resolveImage(ctx context.Context, cluster *mysqlv1al
 func resolveServerVersion(image string) (string, error) {
 	tag := imageTag(image)
 	switch tag {
-	case "5.6":
-		return defaultMySQL56ServerVersion, nil
 	case "8.0":
 		return defaultMySQL80ServerVersion, nil
 	case "8.4":
@@ -343,8 +371,12 @@ func resolveServerVersion(image string) (string, error) {
 	case "9.x":
 		return defaultMySQL9xServerVersion, nil
 	}
-	if _, err := version.Parse(tag); err != nil {
+	parsed, err := version.Parse(tag)
+	if err != nil {
 		return "", fmt.Errorf("cannot resolve MySQL server version from image %q: %w", image, err)
+	}
+	if parsed.Major == 5 && parsed.Minor == 6 {
+		return "", fmt.Errorf("MySQL 5.6 is not supported")
 	}
 	return tag, nil
 }
