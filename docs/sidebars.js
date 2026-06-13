@@ -30,6 +30,11 @@ const sidebars = {
     },
     {
       type: 'doc',
+      id: 'multi-tenancy',
+      label: 'Multi-Tenancy',
+    },
+    {
+      type: 'doc',
       id: 'operations',
       label: 'Operations Runbooks',
     },

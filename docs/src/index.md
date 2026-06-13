@@ -20,6 +20,9 @@ point-in-time recovery.
   versions, slim image layout, rootless runtime, and image selection.
 - [Security Model](./security-model.md): mTLS, MySQL TLS, RBAC, secrets,
   object-store credentials, and current security limits.
+- [Multi-Tenancy](./multi-tenancy.md): cluster-per-tenant vs schema-per-tenant,
+  declarative roles and `Database` resources, privilege scoping, isolation, and
+  reclaim policies.
 - [Operations Runbooks](./operations.md): scaling, switchover, failover,
   retained PVCs, status inspection, and maintenance habits.
 - [Replication and Failover](./replication-failover.md): GTID replicas, role

@@ -1,6 +1,6 @@
 ---
 title: "API Reference"
-description: "Field guide for the Cluster, Backup, ScheduledBackup, ImageCatalog, and ClusterImageCatalog CRDs."
+description: "Field guide for the Cluster, Database, Backup, ScheduledBackup, ImageCatalog, and ClusterImageCatalog CRDs."
 sidebar_position: 9
 ---
 
@@ -445,6 +445,75 @@ current implementation status before relying on these fields.
 | `managedRolesStatus` | Per-role reconciliation state: `byStatus`, `cannotReconcile`, and applied `passwordStatus`. |
 | `observedGeneration` | Last reconciled generation. |
 | `conditions` | Kubernetes conditions such as `Ready`, `Progressing`, `Degraded`. |
+
+## Database
+
+`Database` is a namespaced CRD (short name `mydatabase`) that declares a MySQL
+schema and the accounts scoped to it. It references a `Cluster` in the **same
+namespace**, which makes it the unit you delegate to tenant teams — see
+[Multi-Tenancy](./multi-tenancy.md). The controller diffs the spec against the
+live server and issues the minimal SQL to converge; nothing is dropped unless
+you ask for it.
+
+### Example
+
+```yaml
+apiVersion: mysql.cloudnative-mysql.io/v1alpha1
+kind: Database
+metadata:
+  name: tenant-a
+  namespace: tenant-a
+spec:
+  cluster:
+    name: shared
+  name: tenant_a              # the MySQL schema; defaults to the resource name
+  ensure: present
+  characterSet: utf8mb4
+  collation: utf8mb4_0900_ai_ci
+  reclaimPolicy: retain
+  users:
+    - name: tenant_a_app
+      host: "%"
+      ensure: present
+      passwordSecret:
+        name: tenant-a-db
+        key: password
+      grants:
+        - privileges: [SELECT, INSERT, UPDATE, DELETE]
+          # `on` defaults to the managed schema (tenant_a.*)
+```
+
+### Spec fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `cluster` | object | `{name}` of the target `Cluster` in the same namespace. Required. |
+| `name` | string | MySQL schema name. Defaults to the resource name. |
+| `ensure` | enum | `present` (default) creates the schema; `absent` drops it. |
+| `characterSet` | string | Schema character set (e.g. `utf8mb4`). |
+| `collation` | string | Schema collation (e.g. `utf8mb4_0900_ai_ci`). |
+| `reclaimPolicy` | enum | `retain` (default) keeps the schema on object deletion; `delete` drops it (finalizer-guarded). |
+| `users` | array | Accounts managed for this schema (see below). |
+
+#### `users[]`
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | string | MySQL user name. Required. |
+| `host` | string | Host part. Defaults to `%`. |
+| `ensure` | enum | `present` (default) or `absent`. |
+| `passwordSecret` | object | `{name, key}` selecting the password Secret in the same namespace. |
+| `grants` | array | Grants: `{privileges: [...], on: "db.*"}`. `on` defaults to the managed schema. |
+
+### Database status
+
+| Field | Purpose |
+| --- | --- |
+| `applied` | `true` once MySQL matches the spec. |
+| `message` | Detail, typically an error. |
+| `observedGeneration` | Last reconciled generation. |
+| `passwordStatus` | Per user (`name@host`), the source Secret `resourceVersion` last applied — drives password re-application only on change. |
+| `conditions` | Latest observations of the database state. |
 
 ## Backup
 
