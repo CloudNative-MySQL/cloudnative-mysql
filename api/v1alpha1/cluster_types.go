@@ -665,6 +665,11 @@ type ClusterStatus struct {
 	// +optional
 	ContinuousArchiving *ContinuousArchivingStatus `json:"continuousArchiving,omitempty"`
 
+	// LastRetentionRunTime is when the operator last ran a backup-retention GC
+	// pass against the object store. It throttles the periodic pass.
+	// +optional
+	LastRetentionRunTime *metav1.Time `json:"lastRetentionRunTime,omitempty"`
+
 	// ObservedGeneration is the generation observed by the controller.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`

@@ -3390,6 +3390,12 @@ spec:
               instances:
                 description: Instances is the total number of instances reported.
                 type: integer
+              lastRetentionRunTime:
+                description: |-
+                  LastRetentionRunTime is when the operator last ran a backup-retention GC
+                  pass against the object store. It throttles the periodic pass.
+                format: date-time
+                type: string
               latestGeneratedNode:
                 description: LatestGeneratedNode is the serial of the latest generated
                   instance.

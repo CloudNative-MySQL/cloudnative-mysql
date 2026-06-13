@@ -265,6 +265,11 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if !provisioned || !observed.Ready {
 		return ctrl.Result{RequeueAfter: provisioningRequeue}, nil
 	}
+	// Expire base backups and uncoverable binlogs past the retention window.
+	// Best-effort: a transient object-store error must not fail the reconcile.
+	if err := r.reconcileRetention(ctx, cluster); err != nil {
+		log.Info("Backup retention pass failed, will retry", "error", err.Error())
+	}
 	// Keep re-polling the instance managers so status (GTID, roles, readiness)
 	// stays fresh even when no Kubernetes event triggers a reconcile.
 	return ctrl.Result{RequeueAfter: readyResync}, nil

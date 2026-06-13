@@ -620,6 +620,10 @@ func (in *ClusterStatus) DeepCopyInto(out *ClusterStatus) {
 		*out = new(ContinuousArchivingStatus)
 		**out = **in
 	}
+	if in.LastRetentionRunTime != nil {
+		in, out := &in.LastRetentionRunTime, &out.LastRetentionRunTime
+		*out = (*in).DeepCopy()
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]v1.Condition, len(*in))

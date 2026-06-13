@@ -25,6 +25,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -230,6 +231,61 @@ func (c *Client) IsEmptyPrefix(ctx context.Context, bucket, prefix string) (bool
 		return false, fmt.Errorf("listing s3://%s/%s: %w", bucket, prefix, object.Err)
 	}
 	return false, nil
+}
+
+// ObjectInfo describes a single object returned by ListObjects.
+type ObjectInfo struct {
+	// Key is the full object key.
+	Key string
+	// Size is the object size in bytes.
+	Size int64
+	// LastModified is when the object was last written.
+	LastModified time.Time
+}
+
+// ListObjects returns the objects under bucket/prefix. When recursive is false
+// only the immediate level is walked (delimiter-based), so listing a cluster
+// prefix yields its backup directories rather than every leaf object.
+func (c *Client) ListObjects(ctx context.Context, bucket, prefix string, recursive bool) ([]ObjectInfo, error) {
+	var infos []ObjectInfo
+	for object := range c.mc.ListObjects(ctx, bucket, minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: recursive,
+	}) {
+		if object.Err != nil {
+			return nil, fmt.Errorf("listing s3://%s/%s: %w", bucket, prefix, object.Err)
+		}
+		infos = append(infos, ObjectInfo{
+			Key:          object.Key,
+			Size:         object.Size,
+			LastModified: object.LastModified,
+		})
+	}
+	return infos, nil
+}
+
+// Remove deletes a single object. A not-found object is treated as success.
+func (c *Client) Remove(ctx context.Context, bucket, key string) error {
+	err := c.mc.RemoveObject(ctx, bucket, key, minio.RemoveObjectOptions{})
+	if err != nil && minio.ToErrorResponse(err).Code != "NoSuchKey" {
+		return fmt.Errorf("removing s3://%s/%s: %w", bucket, key, err)
+	}
+	return nil
+}
+
+// RemovePrefix deletes every object under bucket/prefix. It is used to drop an
+// expired base backup directory (archive + metadata) wholesale.
+func (c *Client) RemovePrefix(ctx context.Context, bucket, prefix string) error {
+	objects, err := c.ListObjects(ctx, bucket, prefix, true)
+	if err != nil {
+		return err
+	}
+	for _, object := range objects {
+		if err := c.Remove(ctx, bucket, object.Key); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Exists reports whether bucket/key exists. A not-found response is reported as

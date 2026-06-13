@@ -17,6 +17,8 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"time"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -179,6 +181,30 @@ var _ = Describe("Cluster validation", func() {
 		Expect(cluster.Validate()).NotTo(BeEmpty())
 	})
 
+	It("accepts a valid retention policy with an object store", func() {
+		cluster := newValidCluster()
+		cluster.Spec.Backup = &BackupConfiguration{
+			ObjectStore:     &S3ObjectStore{Bucket: "backups"},
+			RetentionPolicy: "30d",
+		}
+		Expect(cluster.Validate()).To(BeEmpty())
+	})
+
+	It("rejects a malformed retention policy", func() {
+		cluster := newValidCluster()
+		cluster.Spec.Backup = &BackupConfiguration{
+			ObjectStore:     &S3ObjectStore{Bucket: "backups"},
+			RetentionPolicy: "30x",
+		}
+		Expect(cluster.Validate()).NotTo(BeEmpty())
+	})
+
+	It("rejects a retention policy without an object store", func() {
+		cluster := newValidCluster()
+		cluster.Spec.Backup = &BackupConfiguration{RetentionPolicy: "30d"}
+		Expect(cluster.Validate()).NotTo(BeEmpty())
+	})
+
 	It("rejects a replica source missing from externalClusters", func() {
 		cluster := newValidCluster()
 		cluster.Spec.Replica = &ReplicaClusterConfiguration{Source: "origin"}
@@ -210,5 +236,24 @@ var _ = Describe("Cluster helpers", func() {
 		Expect(cluster.GetEnableSuperuserAccess()).To(BeFalse())
 		cluster.Spec.EnableSuperuserAccess = ptrTo(true)
 		Expect(cluster.GetEnableSuperuserAccess()).To(BeTrue())
+	})
+
+	It("parses retention policies into durations", func() {
+		d, err := ParseRetentionPolicy("30d")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(d).To(Equal(30 * 24 * time.Hour))
+
+		w, err := ParseRetentionPolicy("8w")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(w).To(Equal(8 * 7 * 24 * time.Hour))
+
+		m, err := ParseRetentionPolicy("3m")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(m).To(Equal(3 * 30 * 24 * time.Hour))
+
+		_, err = ParseRetentionPolicy("0d")
+		Expect(err).To(HaveOccurred())
+		_, err = ParseRetentionPolicy("garbage")
+		Expect(err).To(HaveOccurred())
 	})
 })

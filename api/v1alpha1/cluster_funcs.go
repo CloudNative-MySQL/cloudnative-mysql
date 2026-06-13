@@ -17,11 +17,41 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"fmt"
 	"regexp"
+	"strconv"
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
+
+// retentionPolicyRe matches a retention-policy duration string: a positive
+// integer followed by a unit (d=day, w=week, m=month). It mirrors the
+// kubebuilder pattern on BackupConfiguration.RetentionPolicy.
+var retentionPolicyRe = regexp.MustCompile(`^([1-9][0-9]*)([dwm])$`)
+
+// retentionUnitDuration maps a retention-policy unit to its duration. A month is
+// approximated as 30 days, matching CloudNativePG's barman retention semantics.
+var retentionUnitDuration = map[string]time.Duration{
+	"d": 24 * time.Hour,
+	"w": 7 * 24 * time.Hour,
+	"m": 30 * 24 * time.Hour,
+}
+
+// ParseRetentionPolicy parses a retention-policy string (e.g. "30d", "8w",
+// "3m") into the duration a backup may live before it is eligible for GC. A
+// month is treated as 30 days.
+func ParseRetentionPolicy(policy string) (time.Duration, error) {
+	match := retentionPolicyRe.FindStringSubmatch(policy)
+	if match == nil {
+		return 0, fmt.Errorf("invalid retention policy %q: want <n>{d|w|m} (e.g. 30d, 8w, 3m)", policy)
+	}
+	n, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0, fmt.Errorf("invalid retention policy %q: %w", policy, err)
+	}
+	return time.Duration(n) * retentionUnitDuration[match[2]], nil
+}
 
 // gtidSetSyntaxRe matches a MySQL GTID set: one or more comma-separated
 // "<uuid>:<interval[:interval...]>" terms, each interval being "n" or "m-n".
@@ -166,7 +196,20 @@ func (cluster *Cluster) Validate() field.ErrorList {
 // coherent: continuous archiving needs an object store to ship binlogs to.
 func (spec *ClusterSpec) validateBackup(path *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
-	if spec.Backup == nil || spec.Backup.ContinuousArchiving == nil {
+	if spec.Backup == nil {
+		return allErrs
+	}
+	if spec.Backup.RetentionPolicy != "" {
+		if _, err := ParseRetentionPolicy(spec.Backup.RetentionPolicy); err != nil {
+			allErrs = append(allErrs, field.Invalid(
+				path.Child("retentionPolicy"), spec.Backup.RetentionPolicy, err.Error()))
+		} else if spec.Backup.ObjectStore == nil {
+			allErrs = append(allErrs, field.Invalid(
+				path.Child("retentionPolicy"), spec.Backup.RetentionPolicy,
+				"retentionPolicy requires backup.objectStore to be configured"))
+		}
+	}
+	if spec.Backup.ContinuousArchiving == nil {
 		return allErrs
 	}
 	if spec.Backup.ContinuousArchiving.Enabled && spec.Backup.ObjectStore == nil {
