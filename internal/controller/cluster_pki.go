@@ -29,55 +29,65 @@ import (
 )
 
 func (r *ClusterReconciler) ensureCertificates(ctx context.Context, cluster *mysqlv1alpha1.Cluster, plan clusterPlan) error {
-	if hasUserCertificates(cluster) {
-		return nil
-	}
-	if err := r.ensureIssuer(ctx, cluster, plan.SelfSignedIssuer, map[string]any{
-		"selfSigned": map[string]any{},
-	}); err != nil {
-		return err
-	}
-	if err := r.ensureCertificate(ctx, cluster, plan.CAIssuer, map[string]any{
-		"secretName": plan.CASecretName,
-		"isCA":       true,
-		"commonName": cluster.Name + ".ca.cnmysql",
-		"issuerRef": map[string]any{
-			"name": plan.SelfSignedIssuer,
-			"kind": "Issuer",
-		},
-	}); err != nil {
-		return err
-	}
-	if err := r.ensureIssuer(ctx, cluster, plan.CAIssuer, map[string]any{
-		"ca": map[string]any{
-			"secretName": plan.CASecretName,
-		},
-	}); err != nil {
-		return err
-	}
-
-	// One server certificate per instance. Each cert carries both server- and
-	// client-auth usages so a replica can reuse it to authenticate to the
-	// primary's control API (backup stream) and to mysqld for replication.
-	for i := 1; i <= plan.Instances; i++ {
-		inst := plan.instanceFor(cluster, i)
-		if err := r.ensureCertificate(ctx, cluster, inst.ServerCertName, map[string]any{
-			"secretName": inst.ServerTLSSecret,
-			"commonName": inst.ServiceName + "." + cluster.Namespace + ".svc",
-			"dnsNames":   serverDNSNames(cluster, plan, inst),
-			"usages": []any{
-				"server auth",
-				"client auth",
-			},
+	certs := cluster.Spec.Certificates
+	needServerCertificates := certs == nil || certs.ServerTLSSecret == ""
+	needClientCertificate := certs == nil || certs.ReplicationTLSSecret == ""
+	needCAIssuer := needServerCertificates || needClientCertificate
+	if needCAIssuer && (certs == nil || certs.ServerCASecret == "") {
+		if err := r.ensureIssuer(ctx, cluster, plan.SelfSignedIssuer, map[string]any{
+			"selfSigned": map[string]any{},
+		}); err != nil {
+			return err
+		}
+		if err := r.ensureCertificate(ctx, cluster, plan.CAIssuer, map[string]any{
+			"secretName": plan.ServerCASecretName,
+			"isCA":       true,
+			"commonName": cluster.Name + ".ca.cnmysql",
 			"issuerRef": map[string]any{
-				"name": plan.CAIssuer,
+				"name": plan.SelfSignedIssuer,
 				"kind": "Issuer",
 			},
 		}); err != nil {
 			return err
 		}
 	}
+	if needCAIssuer {
+		if err := r.ensureIssuer(ctx, cluster, plan.CAIssuer, map[string]any{
+			"ca": map[string]any{
+				"secretName": plan.ServerCASecretName,
+			},
+		}); err != nil {
+			return err
+		}
+	}
 
+	// One server certificate per instance. Each cert carries both server- and
+	// client-auth usages so a replica can reuse it to authenticate to the
+	// primary's control API (backup stream) and to mysqld for replication.
+	if needServerCertificates {
+		for i := 1; i <= plan.Instances; i++ {
+			inst := plan.instanceFor(cluster, i)
+			if err := r.ensureCertificate(ctx, cluster, inst.ServerCertName, map[string]any{
+				"secretName": inst.ServerTLSSecret,
+				"commonName": inst.ServiceName + "." + cluster.Namespace + ".svc",
+				"dnsNames":   serverDNSNames(cluster, plan, inst),
+				"usages": []any{
+					"server auth",
+					"client auth",
+				},
+				"issuerRef": map[string]any{
+					"name": plan.CAIssuer,
+					"kind": "Issuer",
+				},
+			}); err != nil {
+				return err
+			}
+		}
+	}
+
+	if !needClientCertificate {
+		return nil
+	}
 	return r.ensureCertificate(ctx, cluster, cluster.Name+"-client", map[string]any{
 		"secretName": plan.ClientTLSSecret,
 		"commonName": "cnmysql-operator",
@@ -96,7 +106,11 @@ func (r *ClusterReconciler) ensureCertificates(ctx context.Context, cluster *mys
 // through.
 func serverDNSNames(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instancePlan) []any {
 	svcNames := []string{inst.ServiceName, plan.RWServiceName, plan.ROServiceName, plan.RServiceName}
-	names := make([]any, 0, len(svcNames)*4)
+	var altNames []string
+	if cluster.Spec.Certificates != nil {
+		altNames = cluster.Spec.Certificates.ServerAltDNSNames
+	}
+	names := make([]any, 0, len(svcNames)*4+len(altNames))
 	for _, svc := range svcNames {
 		names = append(names,
 			svc,
@@ -105,15 +119,10 @@ func serverDNSNames(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst insta
 			svc+"."+cluster.Namespace+".svc.cluster.local",
 		)
 	}
+	for _, name := range altNames {
+		names = append(names, name)
+	}
 	return names
-}
-
-func hasUserCertificates(cluster *mysqlv1alpha1.Cluster) bool {
-	certs := cluster.Spec.Certificates
-	return certs != nil &&
-		certs.ServerTLSSecret != "" &&
-		certs.ClientCASecret != "" &&
-		certs.ReplicationTLSSecret != ""
 }
 
 func (r *ClusterReconciler) ensureIssuer(ctx context.Context, cluster *mysqlv1alpha1.Cluster, name string, spec map[string]any) error {
@@ -149,11 +158,16 @@ func (r *ClusterReconciler) ensureCertificate(ctx context.Context, cluster *mysq
 // certSecretsReady reports whether all TLS secrets the desired instances need
 // (the CA, the operator client cert, and every instance server cert) exist.
 func (r *ClusterReconciler) certSecretsReady(ctx context.Context, cluster *mysqlv1alpha1.Cluster, plan clusterPlan) (bool, error) {
-	names := []string{plan.CASecretName, plan.ClientTLSSecret}
+	names := []string{plan.ServerCASecretName, plan.ClientCASecretName, plan.ClientTLSSecret}
 	for i := 1; i <= plan.Instances; i++ {
 		names = append(names, plan.instanceFor(cluster, i).ServerTLSSecret)
 	}
+	seen := map[string]struct{}{}
 	for _, name := range names {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
 		secret := &corev1.Secret{}
 		if err := r.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: name}, secret); err != nil {
 			if apierrors.IsNotFound(err) {

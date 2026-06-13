@@ -368,7 +368,7 @@ current implementation status before relying on these fields.
 | `phase` / `phaseReason` | Human-readable reconciliation state. |
 | `image` | Resolved image in use. |
 | `gtidExecutedByInstance` | Last observed GTID set by instance. |
-| `certificates` | Managed certificate status. |
+| `certificates` | Resolved certificate Secret names and managed certificate expirations. |
 | `continuousArchiving` | Binlog archive health and frontier. |
 | `lastRetentionRunTime` | Last retention GC pass time. |
 | `observedGeneration` | Last reconciled generation. |

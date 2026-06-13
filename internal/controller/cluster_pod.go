@@ -39,7 +39,7 @@ func (r *ClusterReconciler) podSpec(cluster *mysqlv1alpha1.Cluster, plan cluster
 			{Name: "backup", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 			{Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: inst.ConfigMapName}}}},
 			{Name: "server-tls", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: inst.ServerTLSSecret}}},
-			{Name: "client-ca", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: plan.CASecretName}}},
+			{Name: "client-ca", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: plan.ClientCASecretName}}},
 		},
 		InitContainers: []corev1.Container{{
 			Name:            "bootstrap",

@@ -25,6 +25,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -228,6 +229,7 @@ func (r *ClusterReconciler) patchStatus(ctx context.Context, cluster *mysqlv1alp
 	if len(observed.GTIDByInstance) > 0 {
 		latest.Status.GTIDExecutedByInstance = observed.GTIDByInstance
 	}
+	latest.Status.Certificates = r.certificateStatus(ctx, latest, observed.Plan)
 	latest.Status.ContinuousArchiving = observed.ContinuousArchiving
 	if observed.ContinuousArchiving != nil {
 		healthy := archivingHealthy(observed.ContinuousArchiving)
@@ -261,6 +263,62 @@ func (r *ClusterReconciler) patchStatus(ctx context.Context, cluster *mysqlv1alp
 	})
 	r.recordPhaseTransition(latest, before.Status.Phase, observed)
 	return r.Status().Patch(ctx, latest, client.MergeFrom(before))
+}
+
+func (r *ClusterReconciler) certificateStatus(
+	ctx context.Context,
+	cluster *mysqlv1alpha1.Cluster,
+	plan clusterPlan,
+) *mysqlv1alpha1.CertificatesStatus {
+	if plan.ServerCASecretName == "" && plan.ClientCASecretName == "" && plan.ClientTLSSecret == "" {
+		return nil
+	}
+	serverTLSSecret := plan.UserServerTLSSecret
+	if serverTLSSecret == "" && plan.Instances > 0 {
+		serverTLSSecret = plan.instanceFor(cluster, 1).ServerTLSSecret
+	}
+	status := &mysqlv1alpha1.CertificatesStatus{
+		CertificatesConfiguration: mysqlv1alpha1.CertificatesConfiguration{
+			ServerCASecret:       plan.ServerCASecretName,
+			ServerTLSSecret:      serverTLSSecret,
+			ClientCASecret:       plan.ClientCASecretName,
+			ReplicationTLSSecret: plan.ClientTLSSecret,
+		},
+		Expirations: r.certificateExpirations(ctx, cluster, plan),
+	}
+	if len(status.Expirations) == 0 {
+		status.Expirations = nil
+	}
+	return status
+}
+
+func (r *ClusterReconciler) certificateExpirations(
+	ctx context.Context,
+	cluster *mysqlv1alpha1.Cluster,
+	plan clusterPlan,
+) map[string]string {
+	certNames := []string{plan.CAIssuer, cluster.Name + "-client"}
+	for i := 1; i <= plan.Instances; i++ {
+		certNames = append(certNames, plan.instanceFor(cluster, i).ServerCertName)
+	}
+	expirations := map[string]string{}
+	for _, certName := range certNames {
+		cert := &unstructured.Unstructured{}
+		cert.SetGroupVersionKind(certificateGVK)
+		if err := r.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: certName}, cert); err != nil {
+			continue
+		}
+		notAfter, ok, _ := unstructured.NestedString(cert.Object, "status", "notAfter")
+		if !ok || notAfter == "" {
+			continue
+		}
+		secretName, ok, _ := unstructured.NestedString(cert.Object, "spec", "secretName")
+		if !ok || secretName == "" {
+			secretName = certName
+		}
+		expirations[secretName] = notAfter
+	}
+	return expirations
 }
 
 // recordPhaseTransition emits an Event only when the phase actually changes, so

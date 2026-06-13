@@ -70,13 +70,35 @@ spec:
 
 ## Certificates
 
-The current implementation depends on cert-manager for generated cluster
-certificates. The operator reconciles issuers/certificates and waits for the
-resulting Secrets before creating Pods that need them.
+By default CNMySQL uses cert-manager to generate a cluster CA, per-instance
+server certificates, and the operator replication/client certificate. The
+operator reconciles issuers/certificates and waits for the resulting Secrets
+before creating Pods that need them.
 
-User-managed TLS certificates are planned but not fully wired yet. Until that
-milestone lands, treat operator-generated cert-manager material as the supported
-path.
+You can bring your own TLS material with `spec.certificates`. Each field is
+optional and independent; CNMySQL only asks cert-manager to generate the
+material you did not provide:
+
+```yaml
+spec:
+  certificates:
+    serverCASecret: my-server-ca
+    serverTLSSecret: my-server-tls
+    clientCASecret: my-client-ca
+    replicationTLSSecret: my-replication-tls
+    serverAltDNSNames:
+      - mysql.example.com
+```
+
+`serverTLSSecret` and `replicationTLSSecret` must be
+`kubernetes.io/tls` Secrets with `tls.crt` and `tls.key`. CA Secrets may be
+`kubernetes.io/tls` or `Opaque`, but must contain `ca.crt` with a PEM encoded CA
+certificate. Invalid or missing user-provided Secrets block reconciliation with
+a `Blocked` condition before Pods are created.
+
+`serverAltDNSNames` is appended to the automatically generated service DNS names
+when CNMySQL generates server certificates. If you provide `serverTLSSecret`,
+you own the SAN list in that certificate.
 
 ## Database accounts
 

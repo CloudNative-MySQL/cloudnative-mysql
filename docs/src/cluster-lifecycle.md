@@ -153,6 +153,22 @@ Scheduling and pod shape are controlled through the Cluster spec:
 `schedulerName`, `imagePullPolicy`, `imagePullSecrets`, `env`, `envFrom`,
 `podSecurityContext`, and `securityContext`.
 
+TLS material is generated through cert-manager unless you provide Secret names
+under `spec.certificates`:
+
+```yaml
+spec:
+  certificates:
+    serverCASecret: my-server-ca
+    serverTLSSecret: my-server-tls
+    clientCASecret: my-client-ca
+    replicationTLSSecret: my-replication-tls
+```
+
+Partial overrides are allowed. For example, setting only `serverTLSSecret`
+reuses your server certificate while CNMySQL still generates the CA issuer and
+operator client certificate.
+
 ## Status model
 
 During reconciliation and periodic resyncs, the operator queries each

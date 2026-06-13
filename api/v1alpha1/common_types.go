@@ -202,26 +202,12 @@ type CertificatesConfiguration struct {
 // CertificatesStatus contains configuration certificates and related expiration
 // dates.
 type CertificatesStatus struct {
+	// CertificatesConfiguration mirrors the resolved certificates configuration.
+	CertificatesConfiguration `json:",inline"`
+
 	// Expiration dates for all certificates.
 	// +optional
 	Expirations map[string]string `json:"expirations,omitempty"`
-
-	// The secret containing the Server CA certificate
-	// +optional
-	ServerCASecret string `json:"serverCASecret,omitempty"`
-
-	// The secret of type kubernetes.io/tls containing the server TLS certificate
-	// +optional
-	ServerTLSSecret string `json:"serverTLSSecret,omitempty"`
-
-	// The secret containing the Client CA certificate
-	// +optional
-	ClientCASecret string `json:"clientCASecret,omitempty"`
-
-	// The secret of type kubernetes.io/tls containing the replication TLS
-	// certificate
-	// +optional
-	ReplicationTLSSecret string `json:"replicationTLSSecret,omitempty"`
 }
 
 // S3SignatureVersion is the AWS Signature version used to sign object-store

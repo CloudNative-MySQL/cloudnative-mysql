@@ -155,6 +155,19 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if err := r.ensureInstanceRBAC(ctx, cluster, plan); err != nil {
 		return ctrl.Result{}, err
 	}
+	if err := r.validateUserCertificates(ctx, cluster); err != nil {
+		log.Info("Blocking cluster: user-provided certificate secret is invalid", "reason", err.Error())
+		if r.Recorder != nil {
+			r.Recorder.Event(cluster, corev1.EventTypeWarning, "InvalidUserCertificate", err.Error())
+		}
+		return ctrl.Result{RequeueAfter: readyResync}, r.patchStatus(ctx, cluster, observedCluster{
+			Phase:       phaseBlocked,
+			PhaseReason: err.Error(),
+			Ready:       false,
+			Progressing: false,
+			Plan:        plan,
+		})
+	}
 	if err := r.ensureCertificates(ctx, cluster, plan); err != nil {
 		return ctrl.Result{}, err
 	}

@@ -663,19 +663,20 @@ func drainEvents(events <-chan string, phase string) bool {
 
 func testPlan() clusterPlan {
 	return clusterPlan{
-		Image:             "cnmysql-instance:8.0",
-		ServerVersion:     "8.0.46",
-		Instances:         1,
-		RootSecretName:    "demo-root",
-		AppSecretName:     "demo-app",
-		ReplicationSecret: "demo-replication",
-		ControlSecretName: "demo-control",
-		BackupSecretName:  "demo-backup",
-		CASecretName:      "demo-ca",
-		ClientTLSSecret:   "demo-client-tls",
-		RWServiceName:     "demo-rw",
-		ROServiceName:     "demo-ro",
-		RServiceName:      "demo-r",
+		Image:              "cnmysql-instance:8.0",
+		ServerVersion:      "8.0.46",
+		Instances:          1,
+		RootSecretName:     "demo-root",
+		AppSecretName:      "demo-app",
+		ReplicationSecret:  "demo-replication",
+		ControlSecretName:  "demo-control",
+		BackupSecretName:   "demo-backup",
+		ServerCASecretName: "demo-ca",
+		ClientCASecretName: "demo-ca",
+		ClientTLSSecret:    "demo-client-tls",
+		RWServiceName:      "demo-rw",
+		ROServiceName:      "demo-ro",
+		RServiceName:       "demo-r",
 	}
 }
 

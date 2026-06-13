@@ -47,7 +47,12 @@ type clusterPlan struct {
 	// Cluster-wide cert-manager material.
 	SelfSignedIssuer string
 	CAIssuer         string
-	CASecretName     string
+	// ServerCASecretName is the CA secret used by the cert-manager CA Issuer
+	// to sign server and operator client certificates.
+	ServerCASecretName string
+	// ClientCASecretName is mounted into instance Pods as client-ca for
+	// verifying client certificates.
+	ClientCASecretName string
 	// ClientTLSSecret holds the operator's client certificate used to call each
 	// instance's control API.
 	ClientTLSSecret string
@@ -189,23 +194,24 @@ func (r *ClusterReconciler) buildPlan(ctx context.Context, cluster *mysqlv1alpha
 
 	certs := cluster.Spec.Certificates
 	plan := clusterPlan{
-		Image:             image,
-		ServerVersion:     serverVersion,
-		Instances:         cluster.Spec.Instances,
-		PrimaryName:       cluster.Status.CurrentPrimary,
-		RootSecretName:    cluster.Name + "-root",
-		AppSecretName:     cluster.Name + "-app",
-		ReplicationSecret: cluster.Name + "-replication",
-		ControlSecretName: cluster.Name + "-control",
-		BackupSecretName:  cluster.Name + "-backup",
-		SelfSignedIssuer:  cluster.Name + "-selfsigned",
-		CAIssuer:          cluster.Name + "-ca",
-		CASecretName:      cluster.Name + "-ca",
-		ClientTLSSecret:   cluster.Name + "-client-tls",
-		RWServiceName:     cluster.Name + "-rw",
-		ROServiceName:     cluster.Name + "-ro",
-		RServiceName:      cluster.Name + "-r",
-		DisabledServices:  disabledServices(cluster),
+		Image:              image,
+		ServerVersion:      serverVersion,
+		Instances:          cluster.Spec.Instances,
+		PrimaryName:        cluster.Status.CurrentPrimary,
+		RootSecretName:     cluster.Name + "-root",
+		AppSecretName:      cluster.Name + "-app",
+		ReplicationSecret:  cluster.Name + "-replication",
+		ControlSecretName:  cluster.Name + "-control",
+		BackupSecretName:   cluster.Name + "-backup",
+		SelfSignedIssuer:   cluster.Name + "-selfsigned",
+		CAIssuer:           cluster.Name + "-ca",
+		ServerCASecretName: cluster.Name + "-ca",
+		ClientCASecretName: cluster.Name + "-ca",
+		ClientTLSSecret:    cluster.Name + "-client-tls",
+		RWServiceName:      cluster.Name + "-rw",
+		ROServiceName:      cluster.Name + "-ro",
+		RServiceName:       cluster.Name + "-r",
+		DisabledServices:   disabledServices(cluster),
 
 		InstanceServiceAccount: cluster.Name + "-instance",
 	}
@@ -227,10 +233,11 @@ func (r *ClusterReconciler) buildPlan(ctx context.Context, cluster *mysqlv1alpha
 	}
 	if certs != nil {
 		if certs.ServerCASecret != "" {
-			plan.CASecretName = certs.ServerCASecret
+			plan.ServerCASecretName = certs.ServerCASecret
+			plan.ClientCASecretName = certs.ServerCASecret
 		}
 		if certs.ClientCASecret != "" {
-			plan.CASecretName = certs.ClientCASecret
+			plan.ClientCASecretName = certs.ClientCASecret
 		}
 		if certs.ServerTLSSecret != "" {
 			plan.UserServerTLSSecret = certs.ServerTLSSecret

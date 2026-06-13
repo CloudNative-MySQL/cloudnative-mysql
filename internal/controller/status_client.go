@@ -70,8 +70,8 @@ func (c *HTTPControlClient) do(ctx context.Context, cluster *mysqlv1alpha1.Clust
 		ClientTLSSecret: cluster.Name + "-client-tls",
 	}
 	if certs := cluster.Spec.Certificates; certs != nil {
-		if certs.ClientCASecret != "" {
-			conn.CASecretName = certs.ClientCASecret
+		if certs.ServerCASecret != "" {
+			conn.CASecretName = certs.ServerCASecret
 		}
 		if certs.ReplicationTLSSecret != "" {
 			conn.ClientTLSSecret = certs.ReplicationTLSSecret
