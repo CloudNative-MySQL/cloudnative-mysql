@@ -10,8 +10,28 @@ const sidebars = {
     },
     {
       type: 'doc',
+      id: 'quickstart',
+      label: 'Quickstart',
+    },
+    {
+      type: 'doc',
       id: 'cluster-lifecycle',
       label: 'Cluster Lifecycle',
+    },
+    {
+      type: 'doc',
+      id: 'instance-images',
+      label: 'Instance Images and Versions',
+    },
+    {
+      type: 'doc',
+      id: 'security-model',
+      label: 'Security Model',
+    },
+    {
+      type: 'doc',
+      id: 'operations',
+      label: 'Operations Runbooks',
     },
     {
       type: 'doc',
@@ -25,6 +45,16 @@ const sidebars = {
     },
     {
       type: 'doc',
+      id: 'backup-retention-deletion',
+      label: 'Backup Retention and Deletion',
+    },
+    {
+      type: 'doc',
+      id: 'object-store',
+      label: 'Object Store Configuration',
+    },
+    {
+      type: 'doc',
       id: 'scheduled-backups',
       label: 'Scheduled Backups',
     },
@@ -32,6 +62,11 @@ const sidebars = {
       type: 'doc',
       id: 'pitr',
       label: 'Point-In-Time Recovery',
+    },
+    {
+      type: 'doc',
+      id: 'troubleshooting',
+      label: 'Troubleshooting',
     },
   ],
 };

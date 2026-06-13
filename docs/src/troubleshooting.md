@@ -1,0 +1,210 @@
+---
+title: "Troubleshooting"
+description: "Common CNMySQL symptoms, likely causes, and first commands to run."
+sidebar_position: 8
+---
+
+# Troubleshooting
+
+This page starts with symptoms and points to the first places to inspect. CNMySQL
+surfaces most issues through Cluster/Backup status, Kubernetes Events, and the
+instance-manager logs.
+
+## First commands
+
+```bash
+kubectl get cluster
+kubectl describe cluster <cluster>
+kubectl get pods -l mysql.cloudnative-mysql.io/cluster=<cluster> --show-labels
+kubectl get events --sort-by=.lastTimestamp
+kubectl get backup
+kubectl get scheduledbackup
+```
+
+Operator logs:
+
+```bash
+kubectl logs -n cnmysql-system deployment/cnmysql-controller-manager -c manager
+```
+
+Instance logs:
+
+```bash
+kubectl logs pod/<cluster>-1 -c manager
+```
+
+## Cluster is not Ready
+
+Check:
+
+```bash
+kubectl describe cluster <cluster>
+kubectl get pods -l mysql.cloudnative-mysql.io/cluster=<cluster>
+kubectl describe pod <pod>
+```
+
+Common causes:
+
+- cert-manager has not produced TLS Secrets yet;
+- PVC is Pending due to storage class or capacity;
+- image pull failed;
+- unsupported Cluster shape is blocked by the controller;
+- instance-manager `/status` is unavailable;
+- initdb, restore, or join init container failed.
+
+Look at `status.phase`, `status.phaseReason`, and Events first.
+
+## Replica will not join
+
+Check the replica init container logs:
+
+```bash
+kubectl logs pod/<replica-pod> -c initdb
+```
+
+Common causes:
+
+- primary is not Ready yet;
+- mTLS material is missing or invalid;
+- source manager endpoint is unreachable;
+- XtraBackup stream failed;
+- target PVC already contains incompatible data;
+- MySQL version/image is incompatible with the source backup.
+
+Replica provisioning uses XtraBackup over the existing instance-manager mTLS
+port. Network policies or service DNS issues can break the join path.
+
+## Primary change is stuck
+
+Inspect:
+
+```bash
+kubectl get cluster <cluster> -o yaml
+kubectl get pods -l mysql.cloudnative-mysql.io/cluster=<cluster> --show-labels
+```
+
+Common causes:
+
+- target replica is not healthy;
+- target GTID set does not contain the old primary's observed GTID set;
+- `spec.maxSwitchoverDelay` expired;
+- old primary could not be demoted or fenced;
+- a former primary returned with errant transactions.
+
+Check `status.currentPrimary`, `status.targetPrimary`,
+`status.targetPrimaryTimestamp`, `status.divergedInstances`, and Events.
+
+## Automatic failover did not happen
+
+CNMySQL blocks failover when it cannot prove a safe candidate.
+
+Check:
+
+```bash
+kubectl describe cluster <cluster>
+kubectl get pods -l mysql.cloudnative-mysql.io/cluster=<cluster> --show-labels
+```
+
+Likely explanations:
+
+- failover delay has not elapsed;
+- Kubernetes still reports the primary Pod as Ready;
+- no ready replica exists;
+- replication SQL state is unhealthy;
+- GTID sets are incomparable or divergent;
+- the only candidate is being deleted.
+
+Failover should not be triggered solely by a temporary manager status endpoint
+failure while Kubernetes still routes the primary as Ready.
+
+## Backup failed
+
+Inspect:
+
+```bash
+kubectl describe backup <backup>
+kubectl get job <backup>-backup
+kubectl logs job/<backup>-backup
+```
+
+Common causes:
+
+- missing object-store configuration;
+- missing or invalid S3 credentials;
+- no healthy backup source;
+- source instance-manager stream failed;
+- XtraBackup failed;
+- object-store upload failed.
+
+The controller writes the backup phase, error, Job name, selected source
+instance, destination path, and conditions into Backup status.
+
+## ScheduledBackup did not create a Backup
+
+Inspect:
+
+```bash
+kubectl describe scheduledbackup <scheduledbackup>
+kubectl get backup -l mysql.cloudnative-mysql.io/scheduled-backup=<scheduledbackup>
+```
+
+Common causes:
+
+- `spec.suspend: true`;
+- invalid six-field cron expression;
+- a child Backup is still running, so the concurrency guard is deferring;
+- deterministic Backup name collision with a non-owned Backup;
+- first scheduled time has not arrived and `immediate` is false.
+
+Remember that the schedule has six fields including seconds.
+
+## Continuous archiving is degraded
+
+Inspect:
+
+```bash
+kubectl get cluster <cluster> -o jsonpath='{.status.continuousArchiving}'
+kubectl describe cluster <cluster>
+```
+
+Common causes:
+
+- object-store endpoint or credentials are wrong;
+- primary cannot upload objects;
+- active binlog has not rotated yet;
+- object-store outage;
+- archiver cannot update manifests or `_index.json`;
+- purge guard is detecting lag.
+
+PITR depends on the archive index and manifests, not just raw binlog objects.
+
+## PITR target is unsatisfiable
+
+Common causes:
+
+- recovery target is before the base backup anchor;
+- target GTID or target time is beyond archived coverage;
+- `_index.json` is missing or stale;
+- required binlog segment or manifest was deleted;
+- archive has a forked or incoherent timeline.
+
+Prefer `targetGTID` for exact recovery boundaries. `targetTime` depends on
+binlog event timestamps and server clocks.
+
+## Object-store data remains after deleting Backup
+
+This is expected today. Deleting a `Backup` object does not delete
+`backup.xbstream` or `metadata.json` from the object store. Remote cleanup is a
+planned finalizer/retention feature.
+
+## Useful labels
+
+```text
+mysql.cloudnative-mysql.io/cluster=<cluster>
+mysql.cloudnative-mysql.io/instance=<instance>
+mysql.cloudnative-mysql.io/role=primary|replica
+mysql.cloudnative-mysql.io/scheduled-backup=<scheduledbackup>
+```
+
+These labels make it easier to list Pods, PVCs, Services, and generated Backups
+for one Cluster or schedule.
