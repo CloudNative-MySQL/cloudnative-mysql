@@ -40,7 +40,7 @@ and scrapes the named container port `metrics`.
 ## Authenticated metrics over TLS
 
 By default the metrics endpoint is served over plain HTTP. Setting
-`spec.monitoring.tls.enabled` switches it to **mutual TLS**, reusing the same
+`spec.monitoring.tls.enabled` switches it to mutual TLS, reusing the same
 PKI as the control API: the instance presents its server certificate and
 requires the scraper to present a client certificate signed by the cluster CA.
 
@@ -56,7 +56,7 @@ spec:
       enabled: true
 ```
 
-No extra certificates are needed — the instance Pods already mount the
+No extra certificates are needed. The instance Pods already mount the
 `server-tls` certificate and the `client-ca` bundle. When a `PodMonitor` is
 generated, CNMySQL wires the scrape-side TLS configuration automatically:
 
@@ -64,13 +64,13 @@ generated, CNMySQL wires the scrape-side TLS configuration automatically:
 - the cluster CA secret (`<cluster>-ca`, key `ca.crt`) verifies the server cert;
 - the operator client certificate (`<cluster>-client-tls`) authenticates the
   scrape;
-- the read Service hostname (`<cluster>-r.<namespace>.svc`) — a SAN present on
-  every instance certificate — is used as the verified server name.
+- the read Service hostname (`<cluster>-r.<namespace>.svc`), a SAN present on
+  every instance certificate, is used as the verified server name.
 
 Prometheus must be able to read those secrets in the cluster's namespace to
 mount the client certificate and CA.
 
-## Custom Queries
+## Custom queries
 
 `customQueriesConfigMap`, `customQueriesSecret`, `disableDefaultQueries`, and
 `metricsQueriesTTL` are API fields for the custom-query collector. The endpoint

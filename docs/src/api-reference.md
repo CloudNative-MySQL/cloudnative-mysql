@@ -6,8 +6,8 @@ sidebar_position: 13
 
 # API reference
 
-This page is a practical field guide for the CNMySQL CRDs that are currently
-used to run clusters, choose images, and manage backups.
+This page is a practical field guide for the CNMySQL CRDs that are used to run
+clusters, choose images, and manage backups.
 
 The API group is:
 
@@ -175,14 +175,14 @@ compared case-insensitively with dashes and underscores treated as equivalent
 - **Denied keys** set the cluster `phase: Blocked` with a reason naming the
   offending key(s). These are either keys the operator manages directly
   (replication identity and topology, TLS material, binlog durability) or keys
-  that would relocate on-disk paths or expose the administrative interface —
-  e.g. `server_id`, `gtid_mode`, `read_only`, `log_bin`, `ssl_cert`,
+  that would relocate on-disk paths or expose the administrative interface,
+  for example `server_id`, `gtid_mode`, `read_only`, `log_bin`, `ssl_cert`,
   `sync_binlog`, `datadir`, `socket`, `tmpdir`, `plugin_dir`, `secure_file_priv`,
   `log_error`, `admin_address`, `admin_ssl_cert`, `tls_ciphersuites`,
   `skip_replica_start`, `auto_generate_certs`. `require_secure_transport` is
-  **not** denied — requiring TLS for client connections is the user's choice.
+  not denied; requiring TLS for client connections is the user's choice.
 - **Deprecated keys** are accepted but emit a `DeprecatedParameter` warning event
-  pointing at the current spelling — e.g. `slave_parallel_workers`
+  pointing at the current spelling, for example `slave_parallel_workers`
   (→ `replica_parallel_workers`), `master_info_repository` (removed on 8.0.23+).
 
 ### Storage
@@ -478,7 +478,7 @@ current implementation status before relying on these fields.
 
 `Database` is a namespaced CRD (short name `mydatabase`) that declares a MySQL
 schema and the accounts scoped to it. It references a `Cluster` in the **same
-namespace**, which makes it the unit you delegate to tenant teams — see
+namespace**, which makes it the unit you delegate to tenant teams; see
 [Multi-Tenancy](./multi-tenancy.md). The controller diffs the spec against the
 live server and issues the minimal SQL to converge; nothing is dropped unless
 you ask for it.
@@ -540,7 +540,7 @@ spec:
 | `applied` | `true` once MySQL matches the spec. |
 | `message` | Detail, typically an error. |
 | `observedGeneration` | Last reconciled generation. |
-| `passwordStatus` | Per user (`name@host`), the source Secret `resourceVersion` last applied — drives password re-application only on change. |
+| `passwordStatus` | Per user (`name@host`), the source Secret `resourceVersion` last applied; drives password re-application only on change. |
 | `conditions` | Latest observations of the database state. |
 
 ## Backup
@@ -595,7 +595,7 @@ spec:
 | `error` | Failure message. |
 | `conditions` | `Ready`, `Progressing`, and `Degraded` observations. |
 
-Deleting a `Backup` object does not currently delete remote object-store data.
+Deleting a `Backup` object does not delete remote object-store data.
 
 ## ScheduledBackup
 

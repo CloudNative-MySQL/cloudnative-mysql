@@ -6,13 +6,13 @@ sidebar_position: 7
 
 # Multi-tenancy with CNMySQL
 
-CNMySQL is operator-owned: the operator holds the policy and converges MySQL
+CNMySQL is operator owned: the operator holds the policy and converges MySQL
 toward a declared state. That property is what makes it usable as a
 multi-tenancy platform. Instead of handing out root and trusting humans to keep
-tenants apart, you declare the tenants — their schemas, accounts, privileges,
-and connection rules — as Kubernetes objects, and the operator reconciles them.
+tenants apart, you declare the tenants and their schemas, accounts, privileges,
+and connection rules as Kubernetes objects, and the operator reconciles them.
 
-This guide covers the two tenancy models CNMySQL supports today, the declarative
+This guide covers the two tenancy models CNMySQL supports, the declarative
 building blocks they share, how isolation is enforced, and the safety controls
 that stop one tenant (or one careless manifest) from affecting the rest.
 
@@ -52,7 +52,7 @@ Use it when tenants need:
 
 The cost is overhead: every tenant carries a full server, storage, and backup
 footprint. Put each `Cluster` in its own namespace and you also get Kubernetes
-RBAC, ResourceQuota, and NetworkPolicy boundaries for free.
+RBAC, ResourceQuota, and NetworkPolicy boundaries.
 
 ### Schema-per-tenant
 
@@ -65,7 +65,7 @@ to operate.
 
 The cost is that isolation is logical, not physical: tenants share `mysqld`,
 buffer pool, binary log, and a backup/restore lifecycle. A restore is
-all-or-nothing across the shared cluster.
+all or nothing across the shared cluster.
 
 | Concern | Cluster-per-tenant | Schema-per-tenant |
 | --- | --- | --- |
@@ -85,7 +85,7 @@ schema-per-tenant inside each.
 Both models lean on the same two declarative primitives. Neither requires you to
 hand out root or run SQL by hand.
 
-### `spec.managed.roles` — accounts owned by the Cluster
+### `spec.managed.roles`: accounts owned by the Cluster
 
 `spec.managed.roles` lives inside the `Cluster` and declares MySQL accounts the
 operator reconciles on the primary. The operator lists live users, diffs them
@@ -97,10 +97,10 @@ This is the right home for accounts that belong to the cluster operator: the
 application owner, a read-only reporting account, a migration account. See the
 [Managed roles](./api-reference.md#managed-roles) reference for every field.
 
-### `Database` — a namespaced tenant resource
+### `Database`: a namespaced tenant resource
 
 The `Database` custom resource is namespace-scoped and references a `Cluster` in
-the **same namespace** — a `Database` cannot target a `Cluster` in another
+the same namespace. A `Database` cannot target a `Cluster` in another
 namespace, and it reads its password Secrets from its own namespace. So a
 `Database`, its Secrets, and the `Cluster` they describe always live together.
 A single `Database` declares:
@@ -141,7 +141,7 @@ full field list.
 
 - **`Database` CRs are the multi-tenant primitive.** Each schema and its
   accounts are a separate object with its own `status` and reclaim policy,
-  reconciled independently — you add, change, or remove a tenant without
+  reconciled independently, so you add, change, or remove a tenant without
   touching the `Cluster` object or running SQL.
 - **`managed.roles` is for cluster-level accounts** the platform owner controls
   inline on the `Cluster`: the application owner, a reporting account. Editing
@@ -153,7 +153,7 @@ differently:
 
 - **Cluster-per-tenant** delegates cleanly by namespace: the tenant's `Cluster`,
   its `Database` objects, and its Secrets all sit in the tenant's namespace, so
-  ordinary namespace-scoped RBAC hands the whole tenant to its team — they never
+  ordinary namespace-scoped RBAC hands the whole tenant to its team, and they never
   see another tenant's namespace.
 - **Schema-per-tenant** puts every tenant's `Database` in the *shared* cluster's
   namespace alongside everyone else's. There is no namespace boundary between
@@ -170,8 +170,8 @@ the safe path the default.
 ### Privileges default to the tenant's schema
 
 A `Database` grant whose `on` is omitted applies to the managed schema only
-(`<schema>.*`), so the common case — "this account can use its own schema and
-nothing else" — needs no thought. Set `on` explicitly only to widen scope, and
+(`<schema>.*`), so the common case, "this account can use its own schema and
+nothing else", needs no thought. Set `on` explicitly only to widen scope, and
 prefer named privilege lists (`SELECT, INSERT, UPDATE, DELETE`) over `ALL`.
 
 Avoid `*.*` targets and `superuser: true` for tenant accounts entirely; they
@@ -203,7 +203,7 @@ shared server.
 ### Namespace boundaries
 
 A `Database` can only target a `Cluster` in its own namespace, and it reads
-password Secrets from that namespace — it cannot reach across namespaces. In
+password Secrets from that namespace, so it cannot reach across namespaces. In
 **cluster-per-tenant** this aligns the Kubernetes blast radius with the
 namespace: a team scoped to its own namespace cannot point a `Database` at
 another tenant's cluster or read another tenant's Secret. In **schema-per-tenant**
@@ -212,7 +212,7 @@ one shared namespace; isolation there rests on MySQL grants, not on namespaces.
 
 ## Configuration hardening as a tenancy control
 
-In any shared model, `spec.mysql.parameters` is a privileged surface — a
+In any shared model, `spec.mysql.parameters` is a privileged surface: a
 parameter that relocates the data directory, disables TLS plumbing, or rewrites
 log paths affects every tenant on the cluster. CNMySQL guards it:
 
@@ -228,7 +228,7 @@ log paths affects every tenant on the cluster. CNMySQL guards it:
   `slave_parallel_workers`) are accepted but raise a `DeprecatedParameter`
   warning event so they surface before a version bump removes them.
 
-`require_secure_transport` is deliberately **not** denied: enforcing application
+`require_secure_transport` is deliberately not denied: enforcing application
 TLS is a legitimate operator choice. See
 [Denied and deprecated parameters](./api-reference.md#denied-and-deprecated-parameters)
 for the full lists.
@@ -242,17 +242,17 @@ for the full lists.
   overwrite Secrets you supply.
 - **Rotation.** Update the referenced Secret. The operator (for managed roles)
   and the Database controller track the applied Secret `resourceVersion` and
-  re-issue `ALTER USER` only when it changes, so rotation is a Secret edit — no
-  manual SQL, no churn when nothing moved.
+  re-issue `ALTER USER` only when it changes, so rotation is a Secret edit with no
+  manual SQL and no churn when nothing moved.
 
 ## Reclaiming tenants
 
 A `Database` carries a reclaim policy, mirroring the PVC model:
 
-- `reclaimPolicy: retain` (default) — deleting the `Database` removes the
-  Kubernetes object but **leaves the MySQL schema and data intact**. Safe
+- `reclaimPolicy: retain` (default): deleting the `Database` removes the
+  Kubernetes object but leaves the MySQL schema and data intact. Safe
   default for production tenants.
-- `reclaimPolicy: delete` — deleting the `Database` drops the schema. A
+- `reclaimPolicy: delete`: deleting the `Database` drops the schema. A
   finalizer guards the object so the drop runs against the primary before the
   object disappears; if no primary is available the operator waits rather than
   orphaning the object.

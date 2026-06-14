@@ -11,7 +11,7 @@ integrators. PITR combines a physical base backup with continuously archived
 MySQL binary logs, then restores the base backup and replays the archived logs
 to a requested recovery target.
 
-The design is GTID-first: object names and binlog file numbers are operational
+The design is GTID first: object names and binlog file numbers are operational
 details, while recovery correctness is measured by whether the archived GTID set
 covers the target.
 
@@ -45,7 +45,7 @@ flowchart LR
 
 ## Scope
 
-PITR currently supports recovery of a new `Cluster` from a completed `Backup`
+PITR supports recovery of a new `Cluster` from a completed `Backup`
 plus the source cluster's continuous binlog archive. The same targets also apply
 to [raw object-store recovery](backup-recovery#restore-from-raw-object-store-no-backup-cr)
 (`bootstrap.recovery.source`), which resolves the base backup and binlog archive
@@ -271,12 +271,12 @@ RTO.
 
 ## Safety decisions
 
-- The archiver is co-located with the database pod. It uses local binlog files
+- The archiver is colocated with the database pod. It uses local binlog files
   instead of a remote replication stream, avoiding an extra replication client
   and preserving exact bytes.
 - Only the current writable primary archives. Failover changes the active
   writer through the existing role/fencing flow.
-- Archive progress is manifest-driven. A raw object without a manifest is not
+- Archive progress is manifest driven. A raw object without a manifest is not
   considered complete.
 - SHA256 in CNMySQL metadata is the integrity source of truth, not S3 ETag.
 - Object keys include `server_uuid` to isolate timeline segments.

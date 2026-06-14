@@ -124,7 +124,7 @@ Deleting a Pod lets the operator recreate it against the retained PVC:
 kubectl delete pod cluster-sample-2
 ```
 
-Every instance boots read-only. The in-pod role reconciler observes Cluster
+Every instance boots read only. The in-pod role reconciler observes Cluster
 status and only clears read-only mode when the instance is the confirmed
 primary.
 

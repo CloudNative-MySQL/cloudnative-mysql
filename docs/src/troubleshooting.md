@@ -156,7 +156,7 @@ Common causes:
 - deterministic Backup name collision with a non-owned Backup;
 - first scheduled time has not arrived and `immediate` is false.
 
-Remember that the schedule has six fields including seconds.
+The schedule has six fields including seconds.
 
 ## Continuous archiving is degraded
 

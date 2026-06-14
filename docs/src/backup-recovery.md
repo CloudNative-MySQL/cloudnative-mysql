@@ -185,7 +185,7 @@ backup restore.
 A Cluster can also recover directly from an object-store bucket without any
 `Backup` object existing in the API server. This is the disaster-recovery path:
 the source cluster's API server (and its `Backup` CRs) may be gone, GC'd by
-retention, or in another cluster entirely — recovery is driven entirely by the
+retention, or in another cluster entirely. Recovery is driven entirely by the
 objects already in S3.
 
 Point `bootstrap.recovery.source` at an `externalClusters` entry. The entry

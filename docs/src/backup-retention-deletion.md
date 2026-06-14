@@ -65,7 +65,7 @@ policy level.
 ## Retention GC
 
 Set `spec.backup.retentionPolicy` on a Cluster to have the operator expire old
-archives automatically. The value is a time window — `<n>d`, `<n>w`, or `<n>m`
+archives automatically. The value is a time window: `<n>d`, `<n>w`, or `<n>m`
 (days, weeks, months, where a month is 30 days):
 
 ```yaml
@@ -90,7 +90,7 @@ and an established primary. Each pass:
    `completedAt` is older than `now - window`. Its whole archive directory
    (`backup.xbstream` + `metadata.json`) is removed.
 2. **Always keeps the newest base backup** as a floor, even if it is older than
-   the window — a cluster must always have something to recover from. So the
+   the window. A cluster must always have something to recover from. So the
    deletable set is `{expired} \ {newest}`.
 3. **Expires uncoverable binlog segments.** The PITR horizon is the oldest
    *retained* base backup's start time. Binlog segments whose last event predates
@@ -108,7 +108,7 @@ archive.
 
 ### What it does not do
 
-- It does **not** delete `Backup` Kubernetes objects — only object-store
+- It does **not** delete `Backup` Kubernetes objects, only object-store
   artifacts. Pruning expired `Backup` CRs stays the scheduler/owner-ref's job.
 - Count-based retention (keep N backups) is not supported; the policy is purely
   time-based.

@@ -146,15 +146,15 @@ observed MySQL topology.
 
 ## Dynamic role reconciliation
 
-Every instance starts read-only. The in-pod role reconciler watches the owning
+Every instance starts read only. The in-pod role reconciler watches the owning
 `Cluster` and compares its own name with `status.targetPrimary` and
 `status.currentPrimary`.
 
 If the pod is the target primary, it drains replication state, promotes itself,
 clears read-only mode, and writes `status.currentPrimary`.
 
-If the pod is not the target primary, it stays or becomes read-only and follows
-the current primary. A diverged instance is kept read-only and is not silently
+If the pod is not the target primary, it stays or becomes read only and follows
+the current primary. A diverged instance is kept read only and is not silently
 re-cloned over its retained PVC.
 
 ## Planned switchover
@@ -201,7 +201,7 @@ deleting its Pod while retaining the PVC. The promoted replica becomes
 ## Former primary rejoin
 
 When a fenced or crashed primary returns, it does not automatically become
-primary again. It boots read-only, observes Cluster status, and attempts to
+primary again. It boots read only, observes Cluster status, and attempts to
 follow the promoted primary.
 
 If its GTID set is contained in the new primary's GTID set, it can safely rejoin

@@ -191,9 +191,9 @@ the cluster is still creating, cloning, restoring, or changing primary.
 
 ## Scale behavior
 
-Scale-up is intentionally ordered. The operator creates one new replica at a
-time and waits for it to become healthy before adding the next one. This bounds
-load on the primary and keeps failures easier to diagnose.
+Scale-up is ordered. The operator creates one new replica at a time and waits
+for it to become healthy before adding the next one. This bounds load on the
+primary and makes failures easier to diagnose.
 
 Scale-down removes highest-ordinal replicas first. The Pod is deleted, but the
 PVC is retained so the user can inspect or delete data deliberately. CNMySQL

@@ -23,7 +23,7 @@ image names used by the repository.
   local e2e setup
 
 CNMySQL uses cert-manager-issued certificates for instance-manager mTLS and
-MySQL TLS in the current implementation.
+MySQL TLS.
 
 ## Build images
 
@@ -178,9 +178,8 @@ Delete the Cluster:
 kubectl delete cluster cluster-sample
 ```
 
-Deleting a `Backup` object does not currently delete S3 objects. Remove object
-store data manually or through external lifecycle policies until CNMySQL remote
-backup cleanup and retention GC are implemented.
+Deleting a `Backup` object does not delete S3 objects. Remove object store data
+manually or through external lifecycle policies.
 
 ## Next steps
 
