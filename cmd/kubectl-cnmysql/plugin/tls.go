@@ -34,6 +34,15 @@ const (
 	clientTLSSecretSuffix = "-client-tls"
 )
 
+// MonitoringTLSEnabled reports whether the cluster serves its metrics endpoint
+// over (mutual) TLS. It mirrors the operator's monitoringTLSEnabled check; when
+// false the metrics port is plain HTTP.
+func MonitoringTLSEnabled(cluster *mysqlv1alpha1.Cluster) bool {
+	return cluster.Spec.Monitoring != nil &&
+		cluster.Spec.Monitoring.TLSConfig != nil &&
+		cluster.Spec.Monitoring.TLSConfig.Enabled
+}
+
 // controlTLSConfig builds the mTLS client config for talking to an instance's
 // control API. The connection is made to a local port-forward, so the
 // certificate's SAN (the per-instance Service DNS name) is pinned via

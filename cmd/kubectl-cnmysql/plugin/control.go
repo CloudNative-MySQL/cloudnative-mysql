@@ -40,6 +40,7 @@ const (
 type ControlClient struct {
 	cluster  *mysqlv1alpha1.Cluster
 	instance string
+	scheme   string
 	forward  *PortForward
 	http     *http.Client
 }
@@ -49,23 +50,32 @@ type ControlClient struct {
 func (e *Env) DialControl(
 	ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string,
 ) (*ControlClient, error) {
-	return e.dial(ctx, cluster, instanceName, ControlPort)
+	// The control API is always mutually authenticated.
+	return e.dial(ctx, cluster, instanceName, ControlPort, true)
 }
 
-// DialMetrics opens a port-forward to the instance's metrics port, which serves
-// the Prometheus scrape over the same mTLS as the control API.
+// DialMetrics opens a port-forward to the instance's metrics port. The metrics
+// endpoint is served over mTLS only when monitoring TLS is enabled on the
+// cluster (spec.monitoring.tlsConfig.enabled); otherwise it is plain HTTP, so
+// the scheme is chosen to match.
 func (e *Env) DialMetrics(
 	ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string,
 ) (*ControlClient, error) {
-	return e.dial(ctx, cluster, instanceName, MetricsPort)
+	return e.dial(ctx, cluster, instanceName, MetricsPort, MonitoringTLSEnabled(cluster))
 }
 
 func (e *Env) dial(
-	ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string, port int,
+	ctx context.Context, cluster *mysqlv1alpha1.Cluster, instanceName string, port int, useTLS bool,
 ) (*ControlClient, error) {
-	tlsConfig, err := e.controlTLSConfig(ctx, cluster, instanceName)
-	if err != nil {
-		return nil, err
+	transport := &http.Transport{}
+	scheme := "http"
+	if useTLS {
+		tlsConfig, err := e.controlTLSConfig(ctx, cluster, instanceName)
+		if err != nil {
+			return nil, err
+		}
+		transport.TLSClientConfig = tlsConfig
+		scheme = "https"
 	}
 	fw, err := e.ForwardPod(ctx, cluster.Namespace, instanceName, port)
 	if err != nil {
@@ -74,10 +84,11 @@ func (e *Env) dial(
 	return &ControlClient{
 		cluster:  cluster,
 		instance: instanceName,
+		scheme:   scheme,
 		forward:  fw,
 		http: &http.Client{
 			Timeout:   30 * time.Second,
-			Transport: &http.Transport{TLSClientConfig: tlsConfig},
+			Transport: transport,
 		},
 	}, nil
 }
@@ -99,7 +110,7 @@ func (c *ControlClient) do(ctx context.Context, method, path string, body, out a
 		}
 		reader = bytes.NewReader(payload)
 	}
-	url := fmt.Sprintf("https://%s%s", c.forward.Local, path)
+	url := fmt.Sprintf("%s://%s%s", c.scheme, c.forward.Local, path)
 	req, err := http.NewRequestWithContext(ctx, method, url, reader)
 	if err != nil {
 		return err
@@ -148,7 +159,7 @@ func (c *ControlClient) Post(ctx context.Context, path string, body, out any) er
 // GetText issues a GET and returns the raw response body, used for non-JSON
 // endpoints such as the Prometheus /metrics scrape.
 func (c *ControlClient) GetText(ctx context.Context, path string) (string, error) {
-	url := fmt.Sprintf("https://%s%s", c.forward.Local, path)
+	url := fmt.Sprintf("%s://%s%s", c.scheme, c.forward.Local, path)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
