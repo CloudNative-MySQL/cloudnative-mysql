@@ -34,6 +34,14 @@ type TLSOptions struct {
 	ClientCAFile string
 }
 
+// MTLSConfig builds a tls.Config that requires and verifies a client
+// certificate signed by the configured client CA. It is exported so other
+// servers (notably the Prometheus metrics endpoint) can adopt the same
+// mutual-TLS posture as the control API rather than re-implementing it.
+func (o TLSOptions) MTLSConfig() (*tls.Config, error) {
+	return o.mtlsConfig()
+}
+
 // mtlsConfig builds a tls.Config that requires and verifies a client
 // certificate signed by the configured client CA.
 func (o TLSOptions) mtlsConfig() (*tls.Config, error) {

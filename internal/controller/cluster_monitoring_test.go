@@ -38,7 +38,12 @@ func TestBuildPodMonitor(t *testing.T) {
 		TLSConfig:        &mysqlv1alpha1.ClusterMonitoringTLSConfig{Enabled: true},
 	}
 
-	podMonitor := buildPodMonitor(cluster)
+	plan := clusterPlan{
+		ServerCASecretName: cluster.Name + "-ca",
+		ClientTLSSecret:    cluster.Name + "-client-tls",
+		RServiceName:       cluster.Name + "-r",
+	}
+	podMonitor := buildPodMonitor(cluster, plan)
 
 	if podMonitor.Name != cluster.Name {
 		t.Fatalf("pod monitor name = %q, want %q", podMonitor.Name, cluster.Name)
@@ -62,6 +67,58 @@ func TestBuildPodMonitor(t *testing.T) {
 	if endpoint.Scheme == nil || *endpoint.Scheme != monitoringv1.SchemeHTTPS {
 		t.Fatalf("endpoint scheme = %v, want %s", endpoint.Scheme, monitoringv1.SchemeHTTPS)
 	}
+	if endpoint.TLSConfig == nil {
+		t.Fatal("endpoint TLS config = nil, want mutual TLS config")
+	}
+	if ca := endpoint.TLSConfig.CA.Secret; ca == nil || ca.Name != plan.ServerCASecretName || ca.Key != "ca.crt" {
+		t.Fatalf("endpoint CA = %#v, want secret %s/ca.crt", ca, plan.ServerCASecretName)
+	}
+	if cert := endpoint.TLSConfig.Cert.Secret; cert == nil || cert.Name != plan.ClientTLSSecret || cert.Key != "tls.crt" {
+		t.Fatalf("endpoint cert = %#v, want secret %s/tls.crt", cert, plan.ClientTLSSecret)
+	}
+	if key := endpoint.TLSConfig.KeySecret; key == nil || key.Name != plan.ClientTLSSecret || key.Key != "tls.key" {
+		t.Fatalf("endpoint key = %#v, want secret %s/tls.key", key, plan.ClientTLSSecret)
+	}
+	wantServerName := plan.RServiceName + "." + cluster.Namespace + ".svc"
+	if sn := endpoint.TLSConfig.ServerName; sn == nil || *sn != wantServerName {
+		t.Fatalf("endpoint serverName = %v, want %q", sn, wantServerName)
+	}
+}
+
+// TestBuildPodMonitorPlainHTTP verifies that without monitoring TLS the endpoint
+// stays on plain HTTP with no scrape-side TLS config.
+func TestBuildPodMonitorPlainHTTP(t *testing.T) {
+	t.Parallel()
+	cluster := baseCluster()
+	cluster.Spec.Monitoring = &mysqlv1alpha1.MonitoringConfiguration{EnablePodMonitor: true}
+
+	endpoint := buildPodMonitor(cluster, clusterPlan{}).Spec.PodMetricsEndpoints[0]
+	if endpoint.Scheme != nil {
+		t.Fatalf("endpoint scheme = %v, want nil (plain HTTP)", endpoint.Scheme)
+	}
+	if endpoint.TLSConfig != nil {
+		t.Fatalf("endpoint TLS config = %#v, want nil", endpoint.TLSConfig)
+	}
+}
+
+// TestRunArgsMetricsTLS checks that the run command opts into serving metrics
+// over mutual TLS exactly when spec.monitoring.tls.enabled is set.
+func TestRunArgsMetricsTLS(t *testing.T) {
+	t.Parallel()
+
+	off := runArgs(baseCluster(), testPlan(), instancePlan{})
+	if containsArg(off, "--metrics-tls") {
+		t.Fatalf("--metrics-tls present without monitoring TLS: %v", off)
+	}
+
+	cluster := baseCluster()
+	cluster.Spec.Monitoring = &mysqlv1alpha1.MonitoringConfiguration{
+		TLSConfig: &mysqlv1alpha1.ClusterMonitoringTLSConfig{Enabled: true},
+	}
+	on := runArgs(cluster, testPlan(), instancePlan{})
+	if !containsArg(on, "--metrics-tls") {
+		t.Fatalf("missing --metrics-tls with monitoring TLS enabled: %v", on)
+	}
 }
 
 func TestReconcilePodMonitorCreateAndDelete(t *testing.T) {
@@ -79,7 +136,7 @@ func TestReconcilePodMonitorCreateAndDelete(t *testing.T) {
 		podMonitorAvailable: true,
 	}
 
-	if err := reconciler.reconcilePodMonitor(ctx, cluster); err != nil {
+	if err := reconciler.reconcilePodMonitor(ctx, cluster, clusterPlan{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -96,7 +153,7 @@ func TestReconcilePodMonitorCreateAndDelete(t *testing.T) {
 	}
 
 	cluster.Spec.Monitoring.EnablePodMonitor = false
-	if err := reconciler.reconcilePodMonitor(ctx, cluster); err != nil {
+	if err := reconciler.reconcilePodMonitor(ctx, cluster, clusterPlan{}); err != nil {
 		t.Fatal(err)
 	}
 	err := reconciler.Get(ctx, key, podMonitor)
@@ -124,7 +181,7 @@ func TestReconcilePodMonitorCRDAbsent(t *testing.T) {
 		podMonitorAvailable: false,
 	}
 
-	if err := reconciler.reconcilePodMonitor(ctx, cluster); err != nil {
+	if err := reconciler.reconcilePodMonitor(ctx, cluster, clusterPlan{}); err != nil {
 		t.Fatalf("reconcilePodMonitor with CRD absent = %v, want nil", err)
 	}
 

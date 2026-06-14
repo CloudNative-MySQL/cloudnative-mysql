@@ -199,7 +199,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if err := r.ensureDefaultServices(ctx, cluster, plan); err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := r.reconcilePodMonitor(ctx, cluster); err != nil {
+	if err := r.reconcilePodMonitor(ctx, cluster, plan); err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := r.reconcilePDB(ctx, cluster, plan); err != nil {

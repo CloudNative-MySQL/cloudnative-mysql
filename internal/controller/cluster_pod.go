@@ -240,6 +240,12 @@ func runArgs(cluster *mysqlv1alpha1.Cluster, _ clusterPlan, _ instancePlan) []st
 		"--source-ssl-cert=" + serverTLSPath + "/tls.crt",
 		"--source-ssl-key=" + serverTLSPath + "/tls.key",
 	}
+	if monitoringTLSEnabled(cluster) {
+		// Serve metrics over the same mutual TLS as the control API: the pod
+		// already mounts server-tls and client-ca, so no extra key material is
+		// needed. Prometheus authenticates with the operator's client cert.
+		args = append(args, "--metrics-tls")
+	}
 	if archivingEnabled(cluster) {
 		args = append(args,
 			"--continuous-archiving",

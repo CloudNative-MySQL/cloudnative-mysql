@@ -18,6 +18,7 @@ limitations under the License.
 package metricserver
 
 import (
+	"crypto/tls"
 	"net/http"
 	"time"
 
@@ -26,8 +27,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// New creates a standalone metrics HTTP server.
-func New(addr string, collector prometheus.Collector) *http.Server {
+// New creates a standalone metrics HTTP server. When tlsConfig is non-nil the
+// server is configured to serve over (mutual) TLS; the caller then starts it
+// with ListenAndServeTLS. A nil tlsConfig serves plain HTTP.
+func New(addr string, collector prometheus.Collector, tlsConfig *tls.Config) *http.Server {
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(collector)
 	registry.MustRegister(collectors.NewGoCollector())
@@ -37,6 +40,7 @@ func New(addr string, collector prometheus.Collector) *http.Server {
 	return &http.Server{
 		Addr:              addr,
 		Handler:           mux,
+		TLSConfig:         tlsConfig,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 }

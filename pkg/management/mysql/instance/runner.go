@@ -18,6 +18,7 @@ package instance
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -82,6 +83,11 @@ type RunOptions struct {
 	// TLS configures the control API mTLS. When ServerCertFile is empty the
 	// control API is served over plain HTTP (development only).
 	TLS webserver.TLSOptions
+	// MetricsTLS, when true, serves the Prometheus metrics endpoint over the
+	// same mutual TLS as the control API (reusing TLS): scrapers must present a
+	// client certificate signed by the cluster CA. When false metrics are served
+	// over plain HTTP.
+	MetricsTLS bool
 	// ShutdownTimeout bounds the graceful mysqld shutdown.
 	ShutdownTimeout time.Duration
 	// StopDelay is the maximum time in seconds allowed for complete Pod stop.
@@ -250,7 +256,19 @@ func Run(ctx context.Context, opts RunOptions) error {
 		return err
 	}
 	healthSrv := buildHealthServer(opts, controller)
-	metricsSrv := metricserver.New(opts.MetricsAddr, metrics.NewExporter(db))
+
+	// The metrics endpoint reuses the control API's server certificate and
+	// client CA, so a TLS-enabled metrics server requires the same key material
+	// to be present. Scrapers authenticate with a client cert signed by that CA.
+	var metricsTLSConfig *tls.Config
+	if opts.MetricsTLS {
+		metricsTLSConfig, err = opts.TLS.MTLSConfig()
+		if err != nil {
+			_ = sup.Shutdown(ctx)
+			return fmt.Errorf("configuring metrics TLS: %w", err)
+		}
+	}
+	metricsSrv := metricserver.New(opts.MetricsAddr, metrics.NewExporter(db), metricsTLSConfig)
 
 	serverErr := make(chan error, 1)
 	log.Info("Starting control API server", "addr", opts.WebserverAddr, "tls", opts.TLS.ServerCertFile != "")
@@ -259,8 +277,14 @@ func Run(ctx context.Context, opts RunOptions) error {
 	log.Info("Starting health API server", "addr", opts.HealthAddr)
 	go func() { healthErr <- servePlain(healthSrv) }()
 	metricsErr := make(chan error, 1)
-	log.Info("Starting metrics API server", "addr", opts.MetricsAddr)
-	go func() { metricsErr <- servePlain(metricsSrv) }()
+	log.Info("Starting metrics API server", "addr", opts.MetricsAddr, "tls", opts.MetricsTLS)
+	go func() {
+		if opts.MetricsTLS {
+			metricsErr <- serve(metricsSrv, opts.TLS)
+		} else {
+			metricsErr <- servePlain(metricsSrv)
+		}
+	}()
 
 	// mysqld exit signals the supervisor's wait channel.
 	mysqldExit := make(chan error, 1)
