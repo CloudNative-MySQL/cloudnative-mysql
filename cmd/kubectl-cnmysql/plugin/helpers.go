@@ -22,12 +22,16 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"sort"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"golang.org/x/term"
 
 	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
 )
@@ -58,6 +62,36 @@ func (e *Env) GetCluster(ctx context.Context, name string) (*mysqlv1alpha1.Clust
 		return nil, fmt.Errorf("getting cluster %q: %w", name, err)
 	}
 	return cluster, nil
+}
+
+// ResolveCluster fetches the named Cluster, or — when name is empty — defaults
+// to the sole Cluster in the namespace. With several clusters present it picks
+// the first by name and warns on stderr; with none it returns an error asking
+// for an explicit name.
+func (e *Env) ResolveCluster(ctx context.Context, name string) (*mysqlv1alpha1.Cluster, error) {
+	if name != "" {
+		return e.GetCluster(ctx, name)
+	}
+	list := &mysqlv1alpha1.ClusterList{}
+	if err := e.Client.List(ctx, list, client.InNamespace(e.Namespace)); err != nil {
+		return nil, fmt.Errorf("listing clusters in namespace %q: %w", e.Namespace, err)
+	}
+	switch len(list.Items) {
+	case 0:
+		return nil, fmt.Errorf("no clusters found in namespace %q; specify a CLUSTER name", e.Namespace)
+	case 1:
+		return &list.Items[0], nil
+	default:
+		sort.Slice(list.Items, func(i, j int) bool { return list.Items[i].Name < list.Items[j].Name })
+		chosen := &list.Items[0]
+		names := make([]string, 0, len(list.Items))
+		for i := range list.Items {
+			names = append(names, list.Items[i].Name)
+		}
+		fmt.Fprintf(os.Stderr, "warning: %d clusters in namespace %q (%s); defaulting to %q\n",
+			len(list.Items), e.Namespace, strings.Join(names, ", "), chosen.Name)
+		return chosen, nil
+	}
 }
 
 // ListPods returns the Pods belonging to a cluster, selected by the cluster
@@ -92,6 +126,32 @@ func PodReady(pod *corev1.Pod) bool {
 // Contains reports whether s is in the slice.
 func Contains(list []string, s string) bool {
 	return slices.Contains(list, s)
+}
+
+// ReadPassword obtains a password without ever exposing it on the command line.
+// When fromStdin is true it reads a single line from stdin (suitable for
+// `--password-stdin`, e.g. piping from a secret); otherwise it prompts on the
+// controlling terminal with echo disabled. The password is never accepted as a
+// flag argument, keeping it out of shell history and the process table.
+func ReadPassword(fromStdin bool) (string, error) {
+	if fromStdin {
+		reader := bufio.NewReader(os.Stdin)
+		line, err := reader.ReadString('\n')
+		if err != nil && line == "" {
+			return "", fmt.Errorf("reading password from stdin: %w", err)
+		}
+		return strings.TrimRight(line, "\r\n"), nil
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return "", fmt.Errorf("no terminal available for password prompt; use --password-stdin")
+	}
+	fmt.Print("Password: ")
+	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Println()
+	if err != nil {
+		return "", fmt.Errorf("reading password: %w", err)
+	}
+	return string(pw), nil
 }
 
 // Confirm prompts the user for a yes/no answer on stdin. It returns true only

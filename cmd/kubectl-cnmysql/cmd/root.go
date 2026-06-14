@@ -48,6 +48,9 @@ func NewRootCommand() *cobra.Command {
 		newPromoteCommand(),
 		newRestartCommand(),
 		newReloadCommand(),
+		newUserCommand(),
+		newDatabaseCommand(),
+		newMetricsCommand(),
 	)
 	return root
 }
@@ -55,6 +58,16 @@ func NewRootCommand() *cobra.Command {
 // newEnv resolves the shared client environment from the persistent flags.
 func newEnv() (*plugin.Env, error) {
 	return plugin.NewEnv(configFlags)
+}
+
+// firstArg returns the first positional argument, or "" if none was given. It
+// lets commands treat a leading CLUSTER argument as optional (defaulting to the
+// sole cluster in the namespace via plugin.ResolveCluster).
+func firstArg(args []string) string {
+	if len(args) > 0 {
+		return args[0]
+	}
+	return ""
 }
 
 // deleteNow returns DeleteOptions that delete a Pod immediately (zero grace

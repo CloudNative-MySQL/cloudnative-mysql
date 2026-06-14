@@ -30,18 +30,19 @@ import (
 func newRestartCommand() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
-		Use:   "restart CLUSTER [INSTANCE]",
+		Use:   "restart [CLUSTER] [INSTANCE]",
 		Short: "Restart all instances (rolling) or a single instance",
 		Long: "Without INSTANCE, bump the restart annotation on the Cluster so the " +
 			"operator performs a rolling restart. With INSTANCE, delete that Pod so " +
-			"Kubernetes recreates it (the PVC is retained).",
-		Args: cobra.RangeArgs(1, 2),
+			"Kubernetes recreates it (the PVC is retained). CLUSTER defaults to the " +
+			"sole cluster in the namespace; pass INSTANCE only together with CLUSTER.",
+		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			instance := ""
 			if len(args) == 2 {
 				instance = args[1]
 			}
-			return runRestart(cmd.Context(), args[0], instance, yes)
+			return runRestart(cmd.Context(), firstArg(args), instance, yes)
 		},
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompts")
@@ -53,13 +54,13 @@ func runRestart(ctx context.Context, clusterName, instance string, yes bool) err
 	if err != nil {
 		return err
 	}
-	cluster, err := env.GetCluster(ctx, clusterName)
+	cluster, err := env.ResolveCluster(ctx, clusterName)
 	if err != nil {
 		return err
 	}
 
 	if instance == "" {
-		if !plugin.Confirm(fmt.Sprintf("Rolling-restart all instances of %q?", clusterName), yes) {
+		if !plugin.Confirm(fmt.Sprintf("Rolling-restart all instances of %q?", cluster.Name), yes) {
 			fmt.Println("aborted")
 			return nil
 		}
@@ -71,7 +72,7 @@ func runRestart(ctx context.Context, clusterName, instance string, yes bool) err
 		if err := env.Client.Patch(ctx, cluster, client.MergeFrom(before)); err != nil {
 			return fmt.Errorf("requesting rolling restart: %w", err)
 		}
-		fmt.Printf("requested rolling restart of %q\n", clusterName)
+		fmt.Printf("requested rolling restart of %q\n", cluster.Name)
 		return nil
 	}
 

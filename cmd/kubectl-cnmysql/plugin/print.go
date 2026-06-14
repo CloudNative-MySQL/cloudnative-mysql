@@ -44,11 +44,11 @@ func Table(header []string, rows [][]string) {
 func printRow(w io.Writer, cols []string) {
 	for i, c := range cols {
 		if i > 0 {
-			fmt.Fprint(w, "\t")
+			_, _ = fmt.Fprint(w, "\t")
 		}
-		fmt.Fprint(w, c)
+		_, _ = fmt.Fprint(w, c)
 	}
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 }
 
 // KeyVal prints an indented "key: value" line, used in summary sections.

@@ -31,11 +31,11 @@ import (
 func newStatusCommand() *cobra.Command {
 	var output string
 	cmd := &cobra.Command{
-		Use:   "status CLUSTER",
+		Use:   "status [CLUSTER]",
 		Short: "Show the status of a cluster and its instances",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStatus(cmd.Context(), args[0], output)
+			return runStatus(cmd.Context(), firstArg(args), output)
 		},
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", "", "output format: json or yaml (default human-readable)")
@@ -47,7 +47,7 @@ func runStatus(ctx context.Context, clusterName, output string) error {
 	if err != nil {
 		return err
 	}
-	cluster, err := env.GetCluster(ctx, clusterName)
+	cluster, err := env.ResolveCluster(ctx, clusterName)
 	if err != nil {
 		return err
 	}

@@ -29,15 +29,15 @@ import (
 
 func newReloadCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "reload CLUSTER",
+		Use:   "reload [CLUSTER]",
 		Short: "Re-apply dynamic my.cnf parameters without restarting",
 		Long: "Bump the reload annotation on the Cluster so the operator re-applies " +
 			"dynamic configuration parameters to the running mysqld instances. " +
 			"Parameters that require a restart are not applied by reload; use " +
 			"'restart' for those.",
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runReload(cmd.Context(), args[0])
+			return runReload(cmd.Context(), firstArg(args))
 		},
 	}
 }
@@ -47,7 +47,7 @@ func runReload(ctx context.Context, clusterName string) error {
 	if err != nil {
 		return err
 	}
-	cluster, err := env.GetCluster(ctx, clusterName)
+	cluster, err := env.ResolveCluster(ctx, clusterName)
 	if err != nil {
 		return err
 	}
@@ -60,6 +60,6 @@ func runReload(ctx context.Context, clusterName string) error {
 	if err := env.Client.Patch(ctx, cluster, client.MergeFrom(before)); err != nil {
 		return fmt.Errorf("requesting reload: %w", err)
 	}
-	fmt.Printf("requested configuration reload of %q\n", clusterName)
+	fmt.Printf("requested configuration reload of %q\n", cluster.Name)
 	return nil
 }
