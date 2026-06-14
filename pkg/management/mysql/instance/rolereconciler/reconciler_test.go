@@ -36,6 +36,9 @@ import (
 	"github.com/yyewolf/cnmysql/pkg/management/mysql/webserver"
 )
 
+// instDemo1 is the conventional primary instance name used across these tests.
+const instDemo1 = "demo-1"
+
 type fakeLocal struct {
 	status         *webserver.Status
 	statusErr      error
@@ -105,7 +108,8 @@ func TestAcquireOrRenewLeaseCreatesLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	lease := &coordinationv1.Lease{}
-	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "default", Name: "demo-primary"}, lease); err != nil {
+	if err := r.Get(context.Background(),
+		types.NamespacedName{Namespace: "default", Name: "demo-primary"}, lease); err != nil {
 		t.Fatal(err)
 	}
 	if lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != "demo-2" {
@@ -121,7 +125,7 @@ func TestAcquireOrRenewLeaseCreatesLease(t *testing.T) {
 
 func TestAcquireOrRenewLeaseRenewsOwnLease(t *testing.T) {
 	t.Parallel()
-	holder := "demo-1"
+	holder := instDemo1
 	transitions := int32(4)
 	duration := int32(15)
 	acquired := metav1.MicroTime{Time: time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)}
@@ -137,13 +141,14 @@ func TestAcquireOrRenewLeaseRenewsOwnLease(t *testing.T) {
 		},
 	}
 	local := &fakeLocal{status: &webserver.Status{Role: webserver.RolePrimary}}
-	r := newReconciler(t, "demo-1", &mysqlv1alpha1.ClusterStatus{TargetPrimary: "demo-1"}, local, lease)
+	r := newReconciler(t, instDemo1, &mysqlv1alpha1.ClusterStatus{TargetPrimary: instDemo1}, local, lease)
 	r.primaryLeaseEnabled = true
 	if err := r.acquireOrRenewLease(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	got := &coordinationv1.Lease{}
-	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "default", Name: "demo-primary"}, got); err != nil {
+	if err := r.Get(context.Background(),
+		types.NamespacedName{Namespace: "default", Name: "demo-primary"}, got); err != nil {
 		t.Fatal(err)
 	}
 	if !got.Spec.AcquireTime.Time.Equal(acquired.Time) {
@@ -159,7 +164,7 @@ func TestAcquireOrRenewLeaseRenewsOwnLease(t *testing.T) {
 
 func TestAcquireOrRenewLeaseWaitsWhenAnotherHolderIsCurrent(t *testing.T) {
 	t.Parallel()
-	holder := "demo-1"
+	holder := instDemo1
 	duration := int32(15)
 	renewed := metav1.MicroTime{Time: time.Now()}
 	lease := &coordinationv1.Lease{
@@ -180,7 +185,7 @@ func TestAcquireOrRenewLeaseWaitsWhenAnotherHolderIsCurrent(t *testing.T) {
 
 func TestReleaseLeaseDeletesOnlyOwnLease(t *testing.T) {
 	t.Parallel()
-	holder := "demo-1"
+	holder := instDemo1
 	duration := int32(15)
 	lease := &coordinationv1.Lease{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo-primary", Namespace: "default"},
@@ -190,13 +195,14 @@ func TestReleaseLeaseDeletesOnlyOwnLease(t *testing.T) {
 		},
 	}
 	local := &fakeLocal{status: &webserver.Status{Role: webserver.RolePrimary}}
-	r := newReconciler(t, "demo-1", &mysqlv1alpha1.ClusterStatus{TargetPrimary: "demo-2"}, local, lease)
+	r := newReconciler(t, instDemo1, &mysqlv1alpha1.ClusterStatus{TargetPrimary: "demo-2"}, local, lease)
 	r.primaryLeaseEnabled = true
 	if err := r.releaseLease(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	got := &coordinationv1.Lease{}
-	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "default", Name: "demo-primary"}, got); err == nil {
+	if err := r.Get(context.Background(),
+		types.NamespacedName{Namespace: "default", Name: "demo-primary"}, got); err == nil {
 		t.Fatal("lease still exists after release")
 	}
 }
@@ -250,13 +256,13 @@ func TestClusterCacheOptionsSelectsSingleClusterByName(t *testing.T) {
 func TestTargetPrimaryAlreadyPrimarySetsCurrentPrimary(t *testing.T) {
 	t.Parallel()
 	local := &fakeLocal{status: &webserver.Status{Role: webserver.RolePrimary, SuperReadOnly: true}}
-	r := newReconciler(t, "demo-1", &mysqlv1alpha1.ClusterStatus{TargetPrimary: "demo-1"}, local)
+	r := newReconciler(t, instDemo1, &mysqlv1alpha1.ClusterStatus{TargetPrimary: instDemo1}, local)
 	reconcile(t, r)
 	cluster := &mysqlv1alpha1.Cluster{}
 	if err := r.Get(context.Background(), r.ClusterKey, cluster); err != nil {
 		t.Fatal(err)
 	}
-	if cluster.Status.CurrentPrimary != "demo-1" {
+	if cluster.Status.CurrentPrimary != instDemo1 {
 		t.Fatalf("currentPrimary = %q, want demo-1", cluster.Status.CurrentPrimary)
 	}
 	if !local.promoted {
@@ -276,7 +282,8 @@ func TestTargetPrimaryReplicaCaughtUpPromotes(t *testing.T) {
 			SecondsBehindSource: &behind,
 		},
 	}}
-	r := newReconciler(t, "demo-2", &mysqlv1alpha1.ClusterStatus{TargetPrimary: "demo-2", CurrentPrimary: "demo-1"}, local)
+	r := newReconciler(t, "demo-2",
+		&mysqlv1alpha1.ClusterStatus{TargetPrimary: "demo-2", CurrentPrimary: instDemo1}, local)
 	reconcile(t, r)
 	if !local.promoted {
 		t.Fatal("caught-up target should promote")
@@ -298,7 +305,8 @@ func TestTargetPrimaryReplicaNotCaughtUpWaits(t *testing.T) {
 			RetrievedGTIDSet: "a:1-10",
 		},
 	}}
-	r := newReconciler(t, "demo-2", &mysqlv1alpha1.ClusterStatus{TargetPrimary: "demo-2", CurrentPrimary: "demo-1"}, local)
+	r := newReconciler(t, "demo-2",
+		&mysqlv1alpha1.ClusterStatus{TargetPrimary: "demo-2", CurrentPrimary: instDemo1}, local)
 	res := reconcile(t, r)
 	if local.promoted {
 		t.Fatal("must not promote before draining the relay log")
@@ -327,7 +335,8 @@ func TestReplicaFollowsCurrentPrimary(t *testing.T) {
 func TestFormerPrimaryDemotesThenFollows(t *testing.T) {
 	t.Parallel()
 	local := &fakeLocal{status: &webserver.Status{Role: webserver.RolePrimary}}
-	r := newReconciler(t, "demo-1", &mysqlv1alpha1.ClusterStatus{TargetPrimary: "demo-2", CurrentPrimary: "demo-2"}, local)
+	r := newReconciler(t, instDemo1,
+		&mysqlv1alpha1.ClusterStatus{TargetPrimary: "demo-2", CurrentPrimary: "demo-2"}, local)
 	reconcile(t, r)
 	if !local.demoted {
 		t.Fatal("former primary must be demoted before following")
@@ -340,7 +349,8 @@ func TestFormerPrimaryDemotesThenFollows(t *testing.T) {
 func TestFormerPrimaryShutsDownWhenDemoteFails(t *testing.T) {
 	t.Parallel()
 	local := &fakeLocal{status: &webserver.Status{Role: webserver.RolePrimary}, demoteErr: errors.New("boom")}
-	r := newReconciler(t, "demo-1", &mysqlv1alpha1.ClusterStatus{TargetPrimary: "demo-2", CurrentPrimary: "demo-2"}, local)
+	r := newReconciler(t, instDemo1,
+		&mysqlv1alpha1.ClusterStatus{TargetPrimary: "demo-2", CurrentPrimary: "demo-2"}, local)
 	reconcile(t, r)
 	if !local.shutdownCalled {
 		t.Fatal("failed live demotion should fall back to shutdown")
@@ -353,10 +363,10 @@ func TestFormerPrimaryShutsDownWhenDemoteFails(t *testing.T) {
 func TestDivergedInstanceStaysReadOnly(t *testing.T) {
 	t.Parallel()
 	local := &fakeLocal{status: &webserver.Status{Role: webserver.RolePrimary}}
-	r := newReconciler(t, "demo-1", &mysqlv1alpha1.ClusterStatus{
+	r := newReconciler(t, instDemo1, &mysqlv1alpha1.ClusterStatus{
 		TargetPrimary:     "demo-2",
 		CurrentPrimary:    "demo-2",
-		DivergedInstances: []string{"demo-1"},
+		DivergedInstances: []string{instDemo1},
 	}, local)
 	reconcile(t, r)
 	if local.configured != nil {
@@ -373,9 +383,9 @@ func TestFencedInstanceStaysReadOnlyAndDoesNotPromote(t *testing.T) {
 	// it must not promote, and a fenced primary is demoted to stop writes (which
 	// also stands the continuous archiver down).
 	local := &fakeLocal{status: &webserver.Status{Role: webserver.RolePrimary}}
-	r := newReconciler(t, "demo-1", &mysqlv1alpha1.ClusterStatus{
-		TargetPrimary:   "demo-1",
-		FencedInstances: []string{"demo-1"},
+	r := newReconciler(t, instDemo1, &mysqlv1alpha1.ClusterStatus{
+		TargetPrimary:   instDemo1,
+		FencedInstances: []string{instDemo1},
 	}, local)
 	reconcile(t, r)
 	if local.promoted {
@@ -394,7 +404,8 @@ func TestOldPrimaryAwaitingPromotionDemotesAndWaits(t *testing.T) {
 	local := &fakeLocal{status: &webserver.Status{Role: webserver.RolePrimary}}
 	// targetPrimary moved to demo-2 but it has not promoted yet, so currentPrimary
 	// is still me (demo-1).
-	r := newReconciler(t, "demo-1", &mysqlv1alpha1.ClusterStatus{TargetPrimary: "demo-2", CurrentPrimary: "demo-1"}, local)
+	r := newReconciler(t, instDemo1,
+		&mysqlv1alpha1.ClusterStatus{TargetPrimary: "demo-2", CurrentPrimary: instDemo1}, local)
 	res := reconcile(t, r)
 	if !local.demoted {
 		t.Fatal("old primary should stop writes (demote) while awaiting the new primary")

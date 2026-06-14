@@ -21,13 +21,16 @@ func NewCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer sf.Close()
+			defer func() { _ = sf.Close() }()
 			df, err := os.OpenFile(args[0], os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0)
 			if err != nil {
 				return err
 			}
-			defer df.Close()
 			if _, err := io.Copy(df, sf); err != nil {
+				_ = df.Close()
+				return err
+			}
+			if err := df.Close(); err != nil {
 				return err
 			}
 			return os.Chmod(args[0], 0750)

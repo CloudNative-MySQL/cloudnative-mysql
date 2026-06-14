@@ -51,6 +51,11 @@ type BackupReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
+	// OperatorImageName is the image the operator controller runs as. It is
+	// used for the backup worker's bootstrap init container, which copies the
+	// manager binary into a shared volume (the instance image no longer ships
+	// it). Falls back to the instance image when empty.
+	OperatorImageName string
 }
 
 // +kubebuilder:rbac:groups=mysql.cloudnative-mysql.io,resources=backups,verbs=get;list;watch
@@ -109,7 +114,11 @@ func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 	jobName := backupJobName(backup)
 	image := backupWorkerImage(cluster)
-	job := backupJob(backup, cluster, *store, keys, backupID, sourceInstance, image, jobName)
+	operatorImage := r.OperatorImageName
+	if operatorImage == "" {
+		operatorImage = image
+	}
+	job := backupJob(backup, cluster, *store, keys, backupID, sourceInstance, image, operatorImage, jobName)
 	if err := controllerutil.SetControllerReference(backup, job, r.Scheme); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -245,6 +254,7 @@ func backupJob(
 	backupID string,
 	sourceInstance string,
 	image string,
+	operatorImage string,
 	jobName string,
 ) *batchv1.Job {
 	backoffLimit := int32(1)
@@ -271,9 +281,20 @@ func backupJob(
 				}},
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,
+					InitContainers: []corev1.Container{{
+						// Copy the manager binary out of the operator image into
+						// the shared scratch volume; the instance image no longer
+						// ships it, so the worker runs /controller/manager.
+						Name:         "bootstrap-controller",
+						Image:        operatorImage,
+						Command:      []string{"/manager"},
+						Args:         []string{"bootstrap", "/controller/manager"},
+						VolumeMounts: backupWorkerVolumeMounts(),
+					}},
 					Containers: []corev1.Container{{
-						Name:  "backup",
-						Image: image,
+						Name:    "backup",
+						Image:   image,
+						Command: []string{"/controller/manager"},
 						Args: []string{
 							"instance", "backup", "upload",
 							"--source-manager-url=https://" + sourceHost + ":8080/cluster/backup",
@@ -333,6 +354,7 @@ func secretKeyEnv(name string, selector mysqlv1alpha1.SecretKeySelector) corev1.
 
 func backupWorkerVolumes(clusterName string) []corev1.Volume {
 	return []corev1.Volume{
+		{Name: "scratch-data", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		{Name: "client-tls", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: clusterName + "-client-tls"}}},
 		{Name: "client-ca", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: clusterName + "-ca"}}},
 	}
@@ -340,6 +362,7 @@ func backupWorkerVolumes(clusterName string) []corev1.Volume {
 
 func backupWorkerVolumeMounts() []corev1.VolumeMount {
 	return []corev1.VolumeMount{
+		{Name: "scratch-data", MountPath: "/controller"},
 		{Name: "client-tls", MountPath: serverTLSPath, ReadOnly: true},
 		{Name: "client-ca", MountPath: clientCAPath, ReadOnly: true},
 	}

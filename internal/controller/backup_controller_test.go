@@ -32,9 +32,13 @@ import (
 	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
 )
 
+// demoPrimaryInstance is the conventional primary instance name used across
+// the controller unit tests.
+const demoPrimaryInstance = "demo-1"
+
 func baseBackupCluster() *mysqlv1alpha1.Cluster {
 	cluster := baseCluster()
-	cluster.Status.CurrentPrimary = "demo-1"
+	cluster.Status.CurrentPrimary = demoPrimaryInstance
 	cluster.Status.Image = "cnmysql-instance:8.4"
 	cluster.Spec.Backup = &mysqlv1alpha1.BackupConfiguration{
 		ObjectStore: &mysqlv1alpha1.S3ObjectStore{
@@ -213,7 +217,7 @@ func TestBackupPrimaryTargetUsesCurrentPrimary(t *testing.T) {
 	if err := reconciler.Get(context.Background(), types.NamespacedName{Namespace: "default", Name: "backup-sample"}, updated); err != nil {
 		t.Fatal(err)
 	}
-	if updated.Status.InstanceName != "demo-1" {
+	if updated.Status.InstanceName != demoPrimaryInstance {
 		t.Fatalf("instance = %q, want primary", updated.Status.InstanceName)
 	}
 }

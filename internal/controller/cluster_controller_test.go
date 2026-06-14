@@ -688,7 +688,7 @@ func TestReconcileBlocksUnsupportedClusterShape(t *testing.T) {
 
 func TestReconcileBootstrapsSingleInstanceToReady(t *testing.T) {
 	t.Parallel()
-	const primaryName = "demo-1"
+	const primaryName = demoPrimaryInstance
 	ctx := context.Background()
 	cluster := baseCluster()
 	scheme := testScheme(t)

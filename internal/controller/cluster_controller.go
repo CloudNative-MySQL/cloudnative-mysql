@@ -220,29 +220,8 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
-	if err := r.ensureCredentials(ctx, cluster, plan); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := r.ensureInstanceRBAC(ctx, cluster, plan); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := r.ensurePrimaryLease(ctx, cluster); err != nil {
-		return ctrl.Result{}, err
-	}
-	if ok, result, err := r.blockOnInvalidCertificate(ctx, cluster, plan); ok {
+	if result, err, handled := r.ensureInfrastructure(ctx, cluster, plan); handled {
 		return result, err
-	}
-	if err := r.ensureCertificates(ctx, cluster, plan); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := r.ensureDefaultServices(ctx, cluster, plan); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := r.reconcilePodMonitor(ctx, cluster, plan); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := r.reconcilePDB(ctx, cluster, plan); err != nil {
-		return ctrl.Result{}, err
 	}
 
 	certsReady, err := r.certSecretsReady(ctx, cluster, plan)
@@ -331,6 +310,39 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// Keep re-polling the instance managers so status (GTID, roles, readiness)
 	// stays fresh even when no Kubernetes event triggers a reconcile.
 	return ctrl.Result{RequeueAfter: readyResync}, nil
+}
+
+// ensureInfrastructure provisions the supporting resources a Cluster needs
+// before any instance Pod is created: credentials, RBAC, the primary lease,
+// certificates, routing Services, the PodMonitor and the PDB. The returned bool
+// is true when the caller should stop reconciliation (an error occurred, or the
+// cluster is blocked waiting on a valid certificate).
+func (r *ClusterReconciler) ensureInfrastructure(ctx context.Context, cluster *mysqlv1alpha1.Cluster, plan clusterPlan) (ctrl.Result, error, bool) {
+	if err := r.ensureCredentials(ctx, cluster, plan); err != nil {
+		return ctrl.Result{}, err, true
+	}
+	if err := r.ensureInstanceRBAC(ctx, cluster, plan); err != nil {
+		return ctrl.Result{}, err, true
+	}
+	if err := r.ensurePrimaryLease(ctx, cluster); err != nil {
+		return ctrl.Result{}, err, true
+	}
+	if ok, result, err := r.blockOnInvalidCertificate(ctx, cluster, plan); ok {
+		return result, err, true
+	}
+	if err := r.ensureCertificates(ctx, cluster, plan); err != nil {
+		return ctrl.Result{}, err, true
+	}
+	if err := r.ensureDefaultServices(ctx, cluster, plan); err != nil {
+		return ctrl.Result{}, err, true
+	}
+	if err := r.reconcilePodMonitor(ctx, cluster, plan); err != nil {
+		return ctrl.Result{}, err, true
+	}
+	if err := r.reconcilePDB(ctx, cluster, plan); err != nil {
+		return ctrl.Result{}, err, true
+	}
+	return ctrl.Result{}, nil, false
 }
 
 // handleBackupCheck guards a fresh cluster from adopting a non-empty backup

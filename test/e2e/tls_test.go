@@ -63,7 +63,7 @@ var _ = Describe("TLS Certificate Renewal", Ordered, func() {
 
 		By("sending SIGHUP to the instance manager PID1")
 		_, err := kubectl("exec", primary, "-n", testNamespace, "-c", "mysql", "--",
-			"/usr/local/bin/manager", "instance", "signal", "--pid=1", "--signal=HUP")
+			"/controller/manager", "instance", "signal", "--pid=1", "--signal=HUP")
 		Expect(err).NotTo(HaveOccurred(), "Failed to send SIGHUP to instance manager")
 
 		By("verifying the instance manager logged the reload")

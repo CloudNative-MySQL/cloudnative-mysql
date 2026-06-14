@@ -55,10 +55,14 @@ func main() {
 		Use:           "manager",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		// Install the logger for every command in the tree (the operator and all
+		// `instance` subcommands share this binary); otherwise subcommands run
+		// without a logger and controller-runtime silently drops their logs.
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			ctrl.SetLogger(zap.New(zap.UseDevMode(false)))
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var tlsOpts []func(*tls.Config)
-
-			ctrl.SetLogger(zap.New(zap.UseDevMode(false)))
 
 			disableHTTP2 := func(c *tls.Config) {
 				setupLog.Info("Disabling HTTP/2")
@@ -129,9 +133,10 @@ func main() {
 				return err
 			}
 			if err := (&controller.BackupReconciler{
-				Client:   mgr.GetClient(),
-				Scheme:   mgr.GetScheme(),
-				Recorder: mgr.GetEventRecorderFor("backup-controller"),
+				Client:            mgr.GetClient(),
+				Scheme:            mgr.GetScheme(),
+				Recorder:          mgr.GetEventRecorderFor("backup-controller"),
+				OperatorImageName: operatorImage,
 			}).SetupWithManager(mgr); err != nil {
 				setupLog.Error(err, "Failed to create controller", "controller", "backup")
 				return err
@@ -172,24 +177,31 @@ func main() {
 		},
 	}
 
-	root.PersistentFlags().StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
-		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
-	root.PersistentFlags().StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	root.PersistentFlags().StringVar(&metricsAddr, "metrics-bind-address", "0",
+		"The address the metrics endpoint binds to. "+
+			"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
+	root.PersistentFlags().StringVar(&probeAddr, "health-probe-bind-address", ":8081",
+		"The address the probe endpoint binds to.")
 	root.PersistentFlags().BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
 	root.PersistentFlags().BoolVar(&secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
-	root.PersistentFlags().StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
-	root.PersistentFlags().StringVar(&webhookCertName, "webhook-cert-name", "tls.crt", "The name of the webhook certificate file.")
+	root.PersistentFlags().StringVar(&webhookCertPath, "webhook-cert-path", "",
+		"The directory that contains the webhook certificate.")
+	root.PersistentFlags().StringVar(&webhookCertName, "webhook-cert-name", "tls.crt",
+		"The name of the webhook certificate file.")
 	root.PersistentFlags().StringVar(&webhookCertKey, "webhook-cert-key", "tls.key", "The name of the webhook key file.")
 	root.PersistentFlags().StringVar(&metricsCertPath, "metrics-cert-path", "",
 		"The directory that contains the metrics server certificate.")
-	root.PersistentFlags().StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "The name of the metrics server certificate file.")
-	root.PersistentFlags().StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
+	root.PersistentFlags().StringVar(&metricsCertName, "metrics-cert-name", "tls.crt",
+		"The name of the metrics server certificate file.")
+	root.PersistentFlags().StringVar(&metricsCertKey, "metrics-cert-key", "tls.key",
+		"The name of the metrics server key file.")
 	root.PersistentFlags().BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
-	root.PersistentFlags().StringVar(&operatorImage, "operator-image", "", "Operator image name (used for bootstrap-controller init container)")
+	root.PersistentFlags().StringVar(&operatorImage, "operator-image", "",
+		"Operator image name (used for bootstrap-controller init container)")
 
 	root.AddCommand(bootstrap.NewCommand())
 	root.AddCommand(instance.NewCommand())
