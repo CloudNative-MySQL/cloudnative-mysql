@@ -108,6 +108,15 @@ func (r *ClusterReconciler) observe(ctx context.Context, cluster *mysqlv1alpha1.
 		}
 	}
 
+	// Under heavy writes, replicas may apply transactions the primary committed
+	// after we read its GTID. Re-read the primary's GTID last so its snapshot
+	// reflects the most recent state and replicas are never seen as supersets.
+	if observed.PrimaryName != "" {
+		if status, err := controlClient.Status(ctx, cluster, observed.PrimaryName); err == nil && status.GTIDExecuted != "" {
+			observed.GTIDByInstance[observed.PrimaryName] = status.GTIDExecuted
+		}
+	}
+
 	if archivingEnabled(cluster) {
 		observed.ContinuousArchiving = aggregateArchiving(observed)
 	}
