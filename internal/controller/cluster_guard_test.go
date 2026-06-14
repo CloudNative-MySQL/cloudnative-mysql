@@ -1,0 +1,202 @@
+/*
+Copyright 2026 The CNMySQL Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"testing"
+
+	policyv1 "k8s.io/api/policy/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
+)
+
+func pdbReconciler(t *testing.T, cluster *mysqlv1alpha1.Cluster) *ClusterReconciler {
+	t.Helper()
+	scheme := testScheme(t)
+	return &ClusterReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build(),
+		Scheme: scheme,
+	}
+}
+
+func getPDB(t *testing.T, r *ClusterReconciler, cluster *mysqlv1alpha1.Cluster, name string) (*policyv1.PodDisruptionBudget, error) {
+	t.Helper()
+	pdb := &policyv1.PodDisruptionBudget{}
+	err := r.Get(context.Background(), types.NamespacedName{Namespace: cluster.Namespace, Name: name}, pdb)
+	return pdb, err
+}
+
+func TestReconcilePDBSingleInstance(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cluster := baseCluster()
+	cluster.Spec.Instances = 1
+	r := pdbReconciler(t, cluster)
+
+	plan := clusterPlan{Instances: 1}
+	if err := r.reconcilePDB(ctx, cluster, plan); err != nil {
+		t.Fatal(err)
+	}
+
+	primary, err := getPDB(t, r, cluster, primaryPDBName(cluster))
+	if err != nil {
+		t.Fatalf("primary PDB get = %v, want created", err)
+	}
+	if !metav1.IsControlledBy(primary, cluster) {
+		t.Fatalf("primary PDB not owned by cluster")
+	}
+	if mu := primary.Spec.MaxUnavailable; mu == nil || mu.IntValue() != 1 {
+		t.Fatalf("primary maxUnavailable = %v, want 1", mu)
+	}
+	if got := primary.Spec.Selector.MatchLabels[roleLabel]; got != rolePrimary {
+		t.Fatalf("primary selector role = %q, want %q", got, rolePrimary)
+	}
+
+	// Single-instance cluster has no replicas, so no replica PDB.
+	if _, err := getPDB(t, r, cluster, replicaPDBName(cluster)); !apierrors.IsNotFound(err) {
+		t.Fatalf("replica PDB get = %v, want not found", err)
+	}
+}
+
+func TestReconcilePDBReplicaMaxUnavailable(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cases := []struct {
+		instances          int
+		wantMaxUnavailable int
+	}{
+		{instances: 2, wantMaxUnavailable: 0}, // 1 replica → floor(1/2)=0
+		{instances: 3, wantMaxUnavailable: 1}, // 2 replicas → floor(2/2)=1
+		{instances: 5, wantMaxUnavailable: 2}, // 4 replicas → floor(4/2)=2
+	}
+	for _, tc := range cases {
+		cluster := baseCluster()
+		cluster.Spec.Instances = tc.instances
+		r := pdbReconciler(t, cluster)
+
+		if err := r.reconcilePDB(ctx, cluster, clusterPlan{Instances: tc.instances}); err != nil {
+			t.Fatal(err)
+		}
+		replica, err := getPDB(t, r, cluster, replicaPDBName(cluster))
+		if err != nil {
+			t.Fatalf("instances=%d replica PDB get = %v, want created", tc.instances, err)
+		}
+		if mu := replica.Spec.MaxUnavailable; mu == nil || mu.IntValue() != tc.wantMaxUnavailable {
+			t.Fatalf("instances=%d replica maxUnavailable = %v, want %d", tc.instances, mu, tc.wantMaxUnavailable)
+		}
+		if got := replica.Spec.Selector.MatchLabels[roleLabel]; got != roleReplica {
+			t.Fatalf("replica selector role = %q, want %q", got, roleReplica)
+		}
+	}
+}
+
+func TestReconcilePDBDisabledDeletes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cluster := baseCluster()
+	cluster.Spec.Instances = 3
+	r := pdbReconciler(t, cluster)
+
+	if err := r.reconcilePDB(ctx, cluster, clusterPlan{Instances: 3}); err != nil {
+		t.Fatal(err)
+	}
+	// Both PDBs should exist now.
+	if _, err := getPDB(t, r, cluster, primaryPDBName(cluster)); err != nil {
+		t.Fatalf("primary PDB get = %v, want created", err)
+	}
+	if _, err := getPDB(t, r, cluster, replicaPDBName(cluster)); err != nil {
+		t.Fatalf("replica PDB get = %v, want created", err)
+	}
+
+	// Disable and reconcile again: both PDBs are removed.
+	disabled := false
+	cluster.Spec.EnablePDB = &disabled
+	if err := r.reconcilePDB(ctx, cluster, clusterPlan{Instances: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := getPDB(t, r, cluster, primaryPDBName(cluster)); !apierrors.IsNotFound(err) {
+		t.Fatalf("primary PDB get = %v, want not found after disable", err)
+	}
+	if _, err := getPDB(t, r, cluster, replicaPDBName(cluster)); !apierrors.IsNotFound(err) {
+		t.Fatalf("replica PDB get = %v, want not found after disable", err)
+	}
+}
+
+func TestReconcilePDBNodeMaintenanceWindow(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cluster := baseCluster()
+	cluster.Spec.Instances = 3
+	r := pdbReconciler(t, cluster)
+
+	// Establish both PDBs first.
+	if err := r.reconcilePDB(ctx, cluster, clusterPlan{Instances: 3}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Open a maintenance window: the replica PDB is removed so nodes can drain,
+	// the primary PDB stays (multi-instance cluster).
+	cluster.Spec.NodeMaintenanceWindow = &mysqlv1alpha1.NodeMaintenanceWindow{InProgress: true}
+	if err := r.reconcilePDB(ctx, cluster, clusterPlan{Instances: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := getPDB(t, r, cluster, replicaPDBName(cluster)); !apierrors.IsNotFound(err) {
+		t.Fatalf("replica PDB get = %v, want not found during maintenance", err)
+	}
+	if _, err := getPDB(t, r, cluster, primaryPDBName(cluster)); err != nil {
+		t.Fatalf("primary PDB get = %v, want still present during maintenance", err)
+	}
+
+	// Close the window: the replica PDB is restored.
+	cluster.Spec.NodeMaintenanceWindow.InProgress = false
+	if err := r.reconcilePDB(ctx, cluster, clusterPlan{Instances: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := getPDB(t, r, cluster, replicaPDBName(cluster)); err != nil {
+		t.Fatalf("replica PDB get = %v, want restored after maintenance", err)
+	}
+}
+
+func TestReconcilePDBSingleInstanceMaintenanceDeletesPrimary(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cluster := baseCluster()
+	cluster.Spec.Instances = 1
+	r := pdbReconciler(t, cluster)
+
+	if err := r.reconcilePDB(ctx, cluster, clusterPlan{Instances: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := getPDB(t, r, cluster, primaryPDBName(cluster)); err != nil {
+		t.Fatalf("primary PDB get = %v, want created", err)
+	}
+
+	// For a single-instance cluster the lone pod must be allowed to drain, so the
+	// primary PDB is removed during the window.
+	cluster.Spec.NodeMaintenanceWindow = &mysqlv1alpha1.NodeMaintenanceWindow{InProgress: true}
+	if err := r.reconcilePDB(ctx, cluster, clusterPlan{Instances: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := getPDB(t, r, cluster, primaryPDBName(cluster)); !apierrors.IsNotFound(err) {
+		t.Fatalf("primary PDB get = %v, want not found during single-instance maintenance", err)
+	}
+}
