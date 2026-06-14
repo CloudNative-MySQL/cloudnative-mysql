@@ -1,5 +1,9 @@
-# Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+# Image URL to use all building/pushing image targets.
+# Defaults to ghcr.io/yyewolf/cnmysql tagged with the current commit, with a
+# "-dirty" suffix appended when the working tree has uncommitted changes.
+# ("+" is not a valid character in an OCI image tag, so we use "-dirty".)
+COMMIT_TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --quiet 2>/dev/null || echo "-dirty")
+IMG ?= ghcr.io/yyewolf/cnmysql:$(COMMIT_TAG)
 # YEAR defines the year value used for substituting the YEAR placeholder in the boilerplate header.
 YEAR ?= $(shell date +%Y)
 

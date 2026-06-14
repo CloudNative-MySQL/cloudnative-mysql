@@ -1,121 +1,111 @@
 # cnmysql
-// TODO(user): Add simple overview of use/purpose
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+A Kubernetes operator for [Percona Server for MySQL](https://www.percona.com/software/mysql-database/percona-server). It runs MySQL clusters with operator-owned lifecycle management, GTID replication with automatic failover, physical backups to S3-compatible storage, and point-in-time recovery.
 
-## Getting Started
+Full documentation lives at **https://yyewolf.github.io/cnmysql/**.
 
-### Prerequisites
-- go version v1.24.6+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+## What it does
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+You declare a `Cluster` and the operator creates the Pods, PVCs, credentials, TLS material, and Services that back it. From there it handles the parts of running MySQL that are tedious to do by hand:
 
-```sh
-make docker-build docker-push IMG=<some-registry>/cnmysql:tag
+- **Replication and failover.** One primary plus GTID-based replicas. Planned switchover for upgrades, automatic failover when the primary goes away, and rejoin of a former primary as a replica.
+- **Role-routed Services.** Each cluster gets a read-write endpoint for the primary (`-rw`), a read-only endpoint for replicas (`-ro`), and a read endpoint for any ready instance (`-r`). Routing follows the `mysql.cloudnative-mysql.io/role` label, so it tracks failover automatically.
+- **Backups.** One-shot physical backups via XtraBackup, written to S3-compatible object storage. `Backup` and `ScheduledBackup` resources cover ad-hoc and cron-driven archives.
+- **Point-in-time recovery.** Continuous binlog archiving lets you restore to a chosen timestamp rather than just the last full backup.
+- **Declarative databases and users.** `Database` resources manage schemas, owners, and privileges without an out-of-band SQL step.
+- **Image catalogs.** `ImageCatalog` and `ClusterImageCatalog` resolve instance images from the MySQL major version, so you can pin or roll versions centrally.
+- **Monitoring and TLS.** Prometheus metrics with mTLS between the operator and instances, plus MySQL TLS.
+
+The API is `mysql.cloudnative-mysql.io/v1alpha1` and covers `Cluster`, `Database`, `Backup`, `ScheduledBackup`, `ImageCatalog`, and `ClusterImageCatalog`. See the [API reference](https://yyewolf.github.io/cnmysql/api-reference) for every field.
+
+## CLI plugin
+
+The repository ships a `kubectl` plugin, `kubectl cnmysql`, for day-to-day operations: cluster status, fencing, promotion, restart, reload, backups, and more. Install it with `make install-plugin`, then run `kubectl cnmysql status <cluster>`.
+
+## Quickstart
+
+The steps below bring up the operator and a three-instance cluster in a local Kind environment. The [full quickstart](https://yyewolf.github.io/cnmysql/quickstart) has the complete walkthrough.
+
+You will need `go`, `docker`, `kubectl`, `kind`, `make`, and `cert-manager` installed in the target cluster. cert-manager issues the certificates used for instance mTLS and MySQL TLS.
+
+Build the operator and instance images, then load them into Kind:
+
+```bash
+make docker-build IMG=cnmysql-controller:dev
+make docker-build-instance INSTANCE_VERSION=8.4
+kind load docker-image cnmysql-controller:dev --name cnmysql-test-e2e
+kind load docker-image cnmysql-instance:8.4 --name cnmysql-test-e2e
 ```
 
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
+Install the CRDs and deploy the controller:
 
-**Install the CRDs into the cluster:**
-
-```sh
+```bash
 make install
+make deploy IMG=cnmysql-controller:dev
+make install-plugin
 ```
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+Create a cluster:
 
-```sh
-make deploy IMG=<some-registry>/cnmysql:tag
+```yaml
+apiVersion: mysql.cloudnative-mysql.io/v1alpha1
+kind: Cluster
+metadata:
+  name: cluster-sample
+spec:
+  instances: 3
+  imageName: cnmysql-instance:8.4
+  storage:
+    size: 10Gi
+  mysql:
+    binlogFormat: ROW
+  bootstrap:
+    initdb:
+      database: app
+      owner: app
 ```
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
+Wait for it and check the topology:
 
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
-
-```sh
-kubectl apply -k config/samples/
+```bash
+kubectl wait --for=condition=Ready cluster/cluster-sample --timeout=15m
+kubectl cnmysql status cluster-sample
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
+Connect through the role-routed Services (`cluster-sample-rw`, `cluster-sample-ro`, `cluster-sample-r`). Application credentials are stored in a generated Secret:
 
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
-
-```sh
-kubectl delete -k config/samples/
+```bash
+kubectl get secrets -l mysql.cloudnative-mysql.io/cluster=cluster-sample
 ```
 
-**Delete the APIs(CRDs) from the cluster:**
+## Documentation
 
-```sh
-make uninstall
+The docs site covers the topics that don't fit in a README:
+
+- [Cluster lifecycle](https://yyewolf.github.io/cnmysql/cluster-lifecycle)
+- [Replication and failover](https://yyewolf.github.io/cnmysql/replication-failover)
+- [Physical backup and recovery](https://yyewolf.github.io/cnmysql/backup-recovery)
+- [Point-in-time recovery](https://yyewolf.github.io/cnmysql/pitr)
+- [Scheduled backups](https://yyewolf.github.io/cnmysql/scheduled-backups)
+- [Object store configuration](https://yyewolf.github.io/cnmysql/object-store)
+- [Multi-tenancy](https://yyewolf.github.io/cnmysql/multi-tenancy)
+- [Security model](https://yyewolf.github.io/cnmysql/security-model)
+- [Operations runbooks](https://yyewolf.github.io/cnmysql/operations)
+- [Troubleshooting](https://yyewolf.github.io/cnmysql/troubleshooting)
+
+## Development
+
+This project is built with [Kubebuilder](https://book.kubebuilder.io). The common targets:
+
+```bash
+make manifests generate   # Regenerate CRDs, RBAC, and DeepCopy after editing types
+make lint-fix             # Auto-fix style
+make test                 # Run unit tests (Ginkgo + Gomega on envtest)
+make run                  # Run the controller locally against the current kubeconfig
 ```
 
-**UnDeploy the controller from the cluster:**
-
-```sh
-make undeploy
-```
-
-## Project Distribution
-
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
-
-```sh
-make build-installer IMG=<some-registry>/cnmysql:tag
-```
-
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
-
-2. Using the installer
-
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/cnmysql/<tag or branch>/dist/install.yaml
-```
-
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
-
-```sh
-kubebuilder edit --plugins=helm/v2-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
+Run `make help` for the full list. `AGENTS.md` documents the layout and the project conventions in more detail.
 
 ## License
 
+Apache License 2.0.
