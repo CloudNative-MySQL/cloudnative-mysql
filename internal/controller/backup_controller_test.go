@@ -253,7 +253,7 @@ func TestRecoveryBootstrapRestoresPrimaryFromObjectStore(t *testing.T) {
 	}
 
 	spec := reconciler.podSpec(cluster, plan, plan.instanceFor(cluster, 1))
-	initArgs := strings.Join(spec.InitContainers[0].Args, " ")
+	initArgs := strings.Join(spec.InitContainers[1].Args, " ")
 	for _, want := range []string{
 		"instance restore",
 		"--bucket=cluster-backups",
@@ -270,7 +270,7 @@ func TestRecoveryBootstrapRestoresPrimaryFromObjectStore(t *testing.T) {
 
 	// The recovering primary's init container carries the object-store creds.
 	var hasEndpoint, hasAccessKey bool
-	for _, env := range spec.InitContainers[0].Env {
+	for _, env := range spec.InitContainers[1].Env {
 		switch env.Name {
 		case "CNMYSQL_S3_ENDPOINT":
 			hasEndpoint = true
@@ -285,7 +285,7 @@ func TestRecoveryBootstrapRestoresPrimaryFromObjectStore(t *testing.T) {
 	// Recovery generates no app Secret, so the init container must not reference
 	// one; a non-optional secretKeyRef would wedge the Pod in
 	// CreateContainerConfigError.
-	for _, env := range spec.InitContainers[0].Env {
+	for _, env := range spec.InitContainers[1].Env {
 		if env.Name == "MYSQL_APP_PASSWORD" {
 			t.Fatal("recovery init container must not reference the app password secret")
 		}
@@ -293,7 +293,7 @@ func TestRecoveryBootstrapRestoresPrimaryFromObjectStore(t *testing.T) {
 
 	// A replica still clones from the primary via join, not restore.
 	replicaSpec := reconciler.podSpec(cluster, plan, plan.instanceFor(cluster, 2))
-	if got := strings.Join(replicaSpec.InitContainers[0].Args, " "); !strings.Contains(got, "instance join") {
+	if got := strings.Join(replicaSpec.InitContainers[1].Args, " "); !strings.Contains(got, "instance join") {
 		t.Fatalf("replica should join the primary, got: %s", got)
 	}
 }
@@ -339,7 +339,7 @@ func TestRecoveryBootstrapPITRTargetReplaysBinlogs(t *testing.T) {
 	}
 
 	spec := reconciler.podSpec(cluster, plan, plan.instanceFor(cluster, 1))
-	initArgs := strings.Join(spec.InitContainers[0].Args, " ")
+	initArgs := strings.Join(spec.InitContainers[1].Args, " ")
 	for _, want := range []string{
 		"instance restore",
 		"--source-cluster=demo",
@@ -355,7 +355,7 @@ func TestRecoveryBootstrapPITRTargetReplaysBinlogs(t *testing.T) {
 
 	// The bucket/path env the replay worker needs to rebuild binlog keys.
 	var hasBucket, hasPath bool
-	for _, env := range spec.InitContainers[0].Env {
+	for _, env := range spec.InitContainers[1].Env {
 		switch env.Name {
 		case "CNMYSQL_S3_BUCKET":
 			hasBucket = env.Value == "cluster-backups"

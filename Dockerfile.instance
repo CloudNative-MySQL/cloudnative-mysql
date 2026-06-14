@@ -19,24 +19,10 @@
 # The runtime stage runs as an unprivileged user (uid 1001); mysqld and the
 # manager never need root, and every port they bind is above 1024.
 
-ARG GO_VERSION=1.25
 ARG BASE_IMAGE=debian:bookworm-slim
 ARG PS_REPO=ps-80
 ARG PXB_REPO=pxb-80
 ARG PXB_PACKAGE=percona-xtrabackup-80
-
-FROM golang:${GO_VERSION} AS builder
-WORKDIR /workspace
-
-COPY go.mod go.mod
-COPY go.sum go.sum
-RUN go mod download
-
-# .dockerignore keeps this to Go sources and the module files.
-COPY . .
-
-# Static binary so it runs unchanged on the slim runtime image.
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/manager ./cmd/manager
 
 FROM ${BASE_IMAGE}
 
@@ -116,10 +102,4 @@ RUN set -eux; \
     chown -R "${MYSQL_UID}:0" /var/lib/mysql /var/run/mysqld; \
     chmod -R g=u /var/lib/mysql /var/run/mysqld
 
-# Percona images run as the mysql user; install the manager as root-readable.
-COPY --from=builder /out/manager /usr/local/bin/manager
-
 USER ${MYSQL_UID}
-
-ENTRYPOINT ["/usr/local/bin/manager"]
-CMD ["instance", "run"]

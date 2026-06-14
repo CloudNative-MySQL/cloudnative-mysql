@@ -33,6 +33,9 @@ import (
 type clusterPlan struct {
 	Image         string
 	ServerVersion string
+	// OperatorImage is the image the operator controller runs as. Used for the
+	// bootstrap-controller init container. Falls back to Image when empty.
+	OperatorImage string
 	// Instances is the desired number of MySQL instances (1 primary + replicas).
 	Instances int
 	// PrimaryName is the instance currently expected to be primary.
@@ -214,6 +217,7 @@ func (r *ClusterReconciler) buildPlan(ctx context.Context, cluster *mysqlv1alpha
 		ServerVersion:      serverVersion,
 		Instances:          cluster.Spec.Instances,
 		PrimaryName:        cluster.Status.CurrentPrimary,
+		OperatorImage:      r.OperatorImageName,
 		RootSecretName:     cluster.Name + "-root",
 		AppSecretName:      cluster.Name + "-app",
 		ReplicationSecret:  cluster.Name + "-replication",

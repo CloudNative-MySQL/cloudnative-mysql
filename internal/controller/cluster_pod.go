@@ -29,11 +29,18 @@ import (
 
 func (r *ClusterReconciler) podSpec(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instancePlan) corev1.PodSpec {
 	gracePeriod := int64(cluster.GetMaxStopDelay())
+
+	operatorImage := plan.OperatorImage
+	if operatorImage == "" {
+		operatorImage = plan.Image
+	}
+
 	podSpec := corev1.PodSpec{
 		RestartPolicy:                 corev1.RestartPolicyAlways,
 		TerminationGracePeriodSeconds: &gracePeriod,
 		ServiceAccountName:            plan.InstanceServiceAccount,
 		Volumes: []corev1.Volume{
+			{Name: "scratch-data", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 			{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: inst.PVCName}}},
 			{Name: "run", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 			{Name: "backup", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
@@ -41,20 +48,34 @@ func (r *ClusterReconciler) podSpec(cluster *mysqlv1alpha1.Cluster, plan cluster
 			{Name: "server-tls", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: inst.ServerTLSSecret}}},
 			{Name: "client-ca", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: plan.ClientCASecretName}}},
 		},
-		InitContainers: []corev1.Container{{
-			Name:            "bootstrap",
-			Image:           plan.Image,
-			ImagePullPolicy: cluster.Spec.ImagePullPolicy,
-			Args:            bootstrapArgs(cluster, plan, inst),
-			Env:             bootstrapEnv(plan, inst),
-			VolumeMounts:    volumeMounts(),
-			Resources:       cluster.Spec.Resources,
-			SecurityContext: cluster.Spec.SecurityContext,
-		}},
+		InitContainers: []corev1.Container{
+			{
+				Name:            "bootstrap-controller",
+				Image:           operatorImage,
+				ImagePullPolicy: cluster.Spec.ImagePullPolicy,
+				Command:         []string{"/manager"},
+				Args:            []string{"bootstrap", "/controller/manager"},
+				VolumeMounts:    volumeMounts(),
+				Resources:       cluster.Spec.Resources,
+				SecurityContext: cluster.Spec.SecurityContext,
+			},
+			{
+				Name:            "bootstrap",
+				Image:           plan.Image,
+				ImagePullPolicy: cluster.Spec.ImagePullPolicy,
+				Command:         []string{"/controller/manager"},
+				Args:            bootstrapArgs(cluster, plan, inst),
+				Env:             bootstrapEnv(plan, inst),
+				VolumeMounts:    volumeMounts(),
+				Resources:       cluster.Spec.Resources,
+				SecurityContext: cluster.Spec.SecurityContext,
+			},
+		},
 		Containers: []corev1.Container{{
 			Name:            "mysql",
 			Image:           plan.Image,
 			ImagePullPolicy: cluster.Spec.ImagePullPolicy,
+			Command:         []string{"/controller/manager"},
 			Args:            runArgs(cluster, plan, inst),
 			Env:             runEnv(cluster, plan),
 			EnvFrom:         cluster.Spec.EnvFrom,
@@ -328,6 +349,7 @@ func secretEnv(name, secretName string) corev1.EnvVar {
 
 func volumeMounts() []corev1.VolumeMount {
 	return []corev1.VolumeMount{
+		{Name: "scratch-data", MountPath: "/controller"},
 		{Name: "data", MountPath: dataDir},
 		{Name: "run", MountPath: "/var/run/mysqld"},
 		{Name: "backup", MountPath: joinBackupDir},

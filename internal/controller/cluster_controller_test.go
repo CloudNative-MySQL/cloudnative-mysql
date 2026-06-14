@@ -346,10 +346,13 @@ func TestPodSpecUsesInitContainerAndCertManagerSecrets(t *testing.T) {
 	plan := testPlan()
 
 	spec := (&ClusterReconciler{}).podSpec(cluster, plan, plan.instanceFor(cluster, 1))
-	if len(spec.InitContainers) != 1 {
+	if len(spec.InitContainers) != 2 {
 		t.Fatalf("init containers = %d", len(spec.InitContainers))
 	}
-	if got := strings.Join(spec.InitContainers[0].Args, " "); !strings.Contains(got, "instance initdb") {
+	if got := strings.Join(spec.InitContainers[0].Args, " "); got != "bootstrap /controller/manager" {
+		t.Fatalf("bootstrap-controller init container args = %q", got)
+	}
+	if got := strings.Join(spec.InitContainers[1].Args, " "); !strings.Contains(got, "instance initdb") {
 		t.Fatalf("init container args = %q", got)
 	}
 	if got := strings.Join(spec.Containers[0].Args, " "); !strings.Contains(got, "instance run") {
@@ -406,7 +409,7 @@ func TestPodSpecReplicaUsesJoin(t *testing.T) {
 	plan.Instances = 3
 
 	spec := (&ClusterReconciler{}).podSpec(cluster, plan, plan.instanceFor(cluster, 2))
-	got := strings.Join(spec.InitContainers[0].Args, " ")
+	got := strings.Join(spec.InitContainers[1].Args, " ")
 	if !strings.Contains(got, "instance join") {
 		t.Fatalf("replica init container should join: %q", got)
 	}
@@ -429,7 +432,7 @@ func TestPodSpecReplicaUsesJoin(t *testing.T) {
 	if !strings.Contains(got, "--replication-user="+replicationUser) {
 		t.Fatalf("run container should carry the replication connection user: %q", got)
 	}
-	for _, container := range []corev1.Container{spec.InitContainers[0], spec.Containers[0]} {
+	for _, container := range []corev1.Container{spec.InitContainers[1], spec.Containers[0]} {
 		for _, env := range container.Env {
 			if env.Name == "MYSQL_REPLICATION_PASSWORD" {
 				t.Fatalf("%s must use mTLS-only replication auth, found MYSQL_REPLICATION_PASSWORD env", container.Name)
