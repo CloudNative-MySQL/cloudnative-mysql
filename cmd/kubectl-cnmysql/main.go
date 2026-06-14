@@ -19,14 +19,25 @@ limitations under the License.
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/yyewolf/cnmysql/cmd/kubectl-cnmysql/cmd"
 )
 
 func main() {
-	if err := cmd.NewRootCommand().Execute(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := cmd.NewRootCommand().ExecuteContext(ctx); err != nil {
+		// A cancelled context (Ctrl-C, e.g. ending a --watch loop) is a clean exit.
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

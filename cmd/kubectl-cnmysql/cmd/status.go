@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -29,17 +30,31 @@ import (
 )
 
 func newStatusCommand() *cobra.Command {
-	var output string
+	var (
+		output   string
+		watch    bool
+		interval time.Duration
+	)
 	cmd := &cobra.Command{
 		Use:               "status [CLUSTER]",
 		Short:             "Show the status of a cluster and its instances",
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeClusterArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStatus(cmd.Context(), firstArg(args), output)
+			clusterName := firstArg(args)
+			label := clusterName
+			if label == "" {
+				label = "<default cluster>"
+			}
+			return watchOrOnce(cmd.Context(), watch, "status "+label, interval,
+				func(ctx context.Context) error {
+					return runStatus(ctx, clusterName, output)
+				})
 		},
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", "", "output format: json or yaml (default human-readable)")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "continuously refresh until interrupted")
+	cmd.Flags().DurationVar(&interval, "watch-interval", defaultWatchInterval, "refresh interval for --watch")
 	return cmd
 }
 

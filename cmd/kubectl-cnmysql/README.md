@@ -45,6 +45,14 @@ several).
 
 "control"-tier commands open an mTLS port-forward to the instance manager.
 
+`status` and `metrics` support `--watch`/`-w` (with `--watch-interval`, default
+2s) to refresh continuously until interrupted, like `watch(1)`:
+
+```sh
+kubectl cnmysql status -w
+kubectl cnmysql metrics -w --watch-interval=5s --filter=mysql_global_status_threads
+```
+
 ### Passwords
 
 `user create`/`user alter` never accept a password as a flag. Use

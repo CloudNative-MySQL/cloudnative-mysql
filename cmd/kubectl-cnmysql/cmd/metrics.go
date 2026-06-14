@@ -17,8 +17,10 @@ limitations under the License.
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -26,7 +28,11 @@ import (
 )
 
 func newMetricsCommand() *cobra.Command {
-	var filter string
+	var (
+		filter   string
+		watch    bool
+		interval time.Duration
+	)
 	cmd := &cobra.Command{
 		Use:   "metrics [CLUSTER] [INSTANCE]",
 		Short: "Scrape the Prometheus metrics of an instance",
@@ -52,27 +58,38 @@ func newMetricsCommand() *cobra.Command {
 			if instance == "" {
 				return fmt.Errorf("cluster %q has no primary; specify an INSTANCE", cluster.Name)
 			}
+			// One port-forward is kept open for the whole invocation, including
+			// across --watch frames.
 			cc, err := env.DialMetrics(ctx, cluster, instance)
 			if err != nil {
 				return err
 			}
 			defer cc.Close()
-			body, err := cc.GetText(ctx, "/metrics")
-			if err != nil {
-				return err
-			}
-			if filter == "" {
-				fmt.Print(body)
+			render := func(ctx context.Context) error {
+				body, err := cc.GetText(ctx, "/metrics")
+				if err != nil {
+					return err
+				}
+				printMetrics(body, filter)
 				return nil
 			}
-			for line := range strings.SplitSeq(body, "\n") {
-				if strings.Contains(line, filter) {
-					fmt.Println(line)
-				}
-			}
-			return nil
+			return watchOrOnce(ctx, watch, "metrics "+instance, interval, render)
 		},
 	}
 	cmd.Flags().StringVar(&filter, "filter", "", "only print lines containing this substring")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "continuously refresh until interrupted")
+	cmd.Flags().DurationVar(&interval, "watch-interval", defaultWatchInterval, "refresh interval for --watch")
 	return cmd
+}
+
+func printMetrics(body, filter string) {
+	if filter == "" {
+		fmt.Print(body)
+		return
+	}
+	for line := range strings.SplitSeq(body, "\n") {
+		if strings.Contains(line, filter) {
+			fmt.Println(line)
+		}
+	}
 }
