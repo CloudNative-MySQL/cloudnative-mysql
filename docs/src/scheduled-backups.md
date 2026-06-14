@@ -11,6 +11,14 @@ backup bytes itself. Instead, it creates ordinary `Backup` objects on a cron
 cadence, and the existing Backup controller runs the XtraBackup-to-object-store
 data path.
 
+For one-off on-demand backups, skip the YAML and use the plugin:
+
+```bash
+kubectl cnmysql backup <cluster>
+```
+
+This page covers recurring scheduled backups.
+
 ```mermaid
 flowchart LR
     SB["ScheduledBackup"]

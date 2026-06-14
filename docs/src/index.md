@@ -13,7 +13,8 @@ point-in-time recovery.
 ## Guides
 
 - [Quickstart](./quickstart.md): build local images, deploy the operator,
-  create a Cluster, inspect services, scale, and take a first Backup.
+  install the CLI plugin, create a Cluster, inspect services, scale, and take a
+  first Backup.
 - [Cluster Lifecycle](./cluster-lifecycle.md): how a `Cluster` becomes Pods,
   PVCs, credentials, TLS material, Services, and status.
 - [Instance Images and Versions](./instance-images.md): supported Percona

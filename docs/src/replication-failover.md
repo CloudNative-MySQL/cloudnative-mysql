@@ -110,23 +110,20 @@ unreachable from the control plane.
 ## Fencing an instance
 
 Fencing takes a single instance out of service without deleting it or its data.
-Annotate the instance Pod:
+Use the plugin:
 
 ```bash
-kubectl annotate pod <cluster>-2 cnmysql.cloudnative-mysql.io/fencing=true
+kubectl cnmysql fence on <cluster> <cluster>-2
+kubectl cnmysql fence off <cluster> <cluster>-2
 ```
 
-The operator then drops the Pod from every routing Service (rw, ro, r, and any
+The operator drops the Pod from every routing Service (rw, ro, r, and any
 user-defined ones) by clearing its `routable` label, and records it under
 `status.fencedInstances`. The instance's in-Pod reconciler reads that list and
 holds the instance read-only, so it accepts no writes and its continuous
 archiver stands down. A fenced instance is also skipped as a failover candidate,
-so the operator never promotes it. Clearing the annotation reverses all of this
-and the instance rejoins normal routing and role reconciliation:
-
-```bash
-kubectl annotate pod <cluster>-2 cnmysql.cloudnative-mysql.io/fencing-
-```
+so the operator never promotes it. Unfencing reverses all of this and the
+instance rejoins normal routing and role reconciliation.
 
 Fencing the primary stops writes for the whole cluster, because the rw Service
 loses its only endpoint. That is deliberate: use it to freeze an instance for

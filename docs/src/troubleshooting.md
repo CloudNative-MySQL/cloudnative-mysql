@@ -13,9 +13,9 @@ instance-manager logs.
 ## First commands
 
 ```bash
-kubectl get cluster
+kubectl cnmysql status <cluster>
+kubectl cnmysql logs <cluster>
 kubectl describe cluster <cluster>
-kubectl get pods -l mysql.cloudnative-mysql.io/cluster=<cluster> --show-labels
 kubectl get events --sort-by=.lastTimestamp
 kubectl get backup
 kubectl get scheduledbackup
@@ -38,8 +38,8 @@ kubectl logs pod/<cluster>-1 -c manager
 Check:
 
 ```bash
-kubectl describe cluster <cluster>
-kubectl get pods -l mysql.cloudnative-mysql.io/cluster=<cluster>
+kubectl cnmysql status <cluster>
+kubectl cnmysql logs <cluster>
 kubectl describe pod <pod>
 ```
 
@@ -79,8 +79,7 @@ port. Network policies or service DNS issues can break the join path.
 Inspect:
 
 ```bash
-kubectl get cluster <cluster> -o yaml
-kubectl get pods -l mysql.cloudnative-mysql.io/cluster=<cluster> --show-labels
+kubectl cnmysql status <cluster>
 ```
 
 Common causes:
@@ -101,8 +100,7 @@ CNMySQL blocks failover when it cannot prove a safe candidate.
 Check:
 
 ```bash
-kubectl describe cluster <cluster>
-kubectl get pods -l mysql.cloudnative-mysql.io/cluster=<cluster> --show-labels
+kubectl cnmysql status <cluster>
 ```
 
 Likely explanations:

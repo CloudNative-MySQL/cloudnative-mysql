@@ -64,7 +64,18 @@ role inheritance.
 
 ## Creating a backup
 
-A one-shot Backup references its Cluster:
+A one-shot Backup references its Cluster. Use the plugin for a quick on-demand
+backup with sensible defaults:
+
+```bash
+kubectl cnmysql backup cluster-sample
+```
+
+This creates a `Backup` object with `xtrabackup` method, `prefer-standby`
+target, and online mode. The Backup reconciler runs the XtraBackup-to-object-store
+data path.
+
+You can also define a Backup by hand when you need more control:
 
 ```yaml
 apiVersion: mysql.cloudnative-mysql.io/v1alpha1

@@ -67,6 +67,21 @@ Check the controller manager:
 kubectl get pods -n cnmysql-system
 ```
 
+## Install the CLI plugin
+
+```bash
+make install-plugin
+```
+
+Verify:
+
+```bash
+kubectl cnmysql version
+```
+
+The plugin is now available as `kubectl cnmysql`. Most commands default to the
+only cluster in the current namespace, so you can often skip the cluster name.
+
 ## Create a cluster
 
 Apply a minimal three-instance cluster:
@@ -93,8 +108,7 @@ Wait for readiness:
 
 ```bash
 kubectl wait --for=condition=Ready cluster/cluster-sample --timeout=15m
-kubectl get cluster cluster-sample
-kubectl get pods -l mysql.cloudnative-mysql.io/cluster=cluster-sample
+kubectl cnmysql status cluster-sample
 ```
 
 Expected topology:
@@ -148,22 +162,12 @@ Delete retained PVCs only after you are sure the data is no longer needed.
 
 ## Take a backup
 
-Configure an object store on the Cluster or Backup, then create:
-
-```yaml
-apiVersion: mysql.cloudnative-mysql.io/v1alpha1
-kind: Backup
-metadata:
-  name: backup-sample
-spec:
-  cluster:
-    name: cluster-sample
-  method: xtrabackup
-  target: prefer-standby
-  online: true
+```bash
+kubectl cnmysql backup cluster-sample
 ```
 
-Watch it:
+This creates a `Backup` object with defaults (xtrabackup, prefer-standby, online).
+Track it:
 
 ```bash
 kubectl get backup backup-sample -w

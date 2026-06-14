@@ -14,6 +14,21 @@ The current exporter publishes built-in Go runtime metrics plus MySQL global
 status metrics from `SHOW GLOBAL STATUS`. More MySQL scraper families and custom
 query loading are planned as M13.1 continues.
 
+## Ad-hoc metrics inspection
+
+Scrape an instance's current metrics directly from your terminal:
+
+```bash
+kubectl cnmysql metrics <cluster>                # primary
+kubectl cnmysql metrics <cluster> <instance>     # specific instance
+kubectl cnmysql metrics <cluster> -w             # refresh every 2s
+kubectl cnmysql metrics <cluster> --filter=mysql_global_status_threads
+```
+
+The plugin opens an mTLS port-forward to the instance manager and scrapes
+`/metrics`. This is useful for debugging and quick checks, not for production
+monitoring. Use the `PodMonitor` for Prometheus integration.
+
 ## PodMonitor
 
 When the Prometheus Operator CRDs are installed, CNMySQL can create an owned

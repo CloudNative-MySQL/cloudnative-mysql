@@ -4,6 +4,16 @@ metadata:
   labels:
     app.kubernetes.io/name: cnmysql
     app.kubernetes.io/managed-by: kustomize
-  name: database-sample
+  name: testdb
 spec:
-  # TODO(user): Add fields here
+  cluster:
+    name: cluster-sample
+  reclaimPolicy: delete
+  users:
+  - name: testdb
+    passwordSecret:
+      name: testdb-user
+      key: password
+    grants:
+    - privileges:
+      - ALL
