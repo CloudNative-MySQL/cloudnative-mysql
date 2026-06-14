@@ -270,15 +270,15 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	// Remove replicas above the desired count (highest ordinal first), then
-	// provision instances in order, ramping up one replica at a time.
+	// observe surviving instances. Observation runs before provisioning so
+	// that when the current primary Pod is gone, the operator can select a
+	// failover candidate and update targetPrimary before reconcileInstances
+	// recreates the Pod. Otherwise the recreated Pod re-establishes itself
+	// as primary (targetPrimary still points to it from the bootstrap) and
+	// failover never fires.
 	if err := r.scaleDownReplicas(ctx, cluster, plan); err != nil {
 		return ctrl.Result{}, err
 	}
-	provisioned, err := r.reconcileInstances(ctx, cluster, plan)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
 	observed, err := r.observe(ctx, cluster, plan)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -291,6 +291,10 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 	if failoverHandled {
 		return failoverResult, nil
+	}
+	provisioned, err := r.reconcileInstances(ctx, cluster, plan)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
 	switched, err := r.reconcileSwitchover(ctx, cluster, plan, observed)
 	if err != nil {
