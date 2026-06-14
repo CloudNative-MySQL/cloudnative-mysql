@@ -81,6 +81,12 @@ type RunOptions struct {
 	// Archiving, when set and Enabled, runs the continuous binlog archiver in
 	// this Pod (active only while the instance is the writable primary).
 	Archiving *ArchivingConfig
+	// SemiSyncEnabled installs and enables the semi-synchronous replication
+	// plugins after mysqld starts. The initial wait/timeout values mirror the
+	// rendered loose- my.cnf values, but are applied explicitly after plugin load.
+	SemiSyncEnabled       bool
+	SemiSyncWaitCount     int
+	SemiSyncTimeoutMillis int
 	// TLS configures the control API mTLS. When ServerCertFile is empty the
 	// control API is served over plain HTTP (development only).
 	TLS webserver.TLSOptions
@@ -125,6 +131,73 @@ func (o *RunOptions) applyDefaults() {
 	if o.MetricsAddr == "" {
 		o.MetricsAddr = ":9187"
 	}
+}
+
+func configureSemiSync(ctx context.Context, repl *replication.Manager, opts RunOptions) error {
+	log := logf.FromContext(ctx).WithName("semi-sync")
+
+	roState, err := repl.ReadOnly(ctx)
+	if err != nil {
+		return err
+	}
+	restoreReadOnly := func() error {
+		if roState.ReadOnly {
+			if err := repl.SetReadOnly(ctx, true); err != nil {
+				return err
+			}
+		}
+		if roState.SuperReadOnly {
+			return repl.SetSuperReadOnly(ctx, true)
+		}
+		return nil
+	}
+
+	log.Info("Clearing read_only for semi-sync plugin installation")
+	if roState.SuperReadOnly {
+		if err := repl.SetSuperReadOnly(ctx, false); err != nil {
+			return err
+		}
+	}
+	if roState.ReadOnly {
+		if err := repl.SetReadOnly(ctx, false); err != nil {
+			return err
+		}
+	}
+
+	err = func() error {
+		log.Info("Installing semi-sync replication plugins")
+		if err := repl.InstallSemiSyncSource(ctx); err != nil {
+			return err
+		}
+		if err := repl.InstallSemiSyncReplica(ctx); err != nil {
+			return err
+		}
+		log.Info("Enabling semi-sync replication")
+		if err := repl.EnableSemiSync(ctx); err != nil {
+			return err
+		}
+		if opts.SemiSyncWaitCount > 0 {
+			log.Info("Setting semi-sync wait for replica count", "count", opts.SemiSyncWaitCount)
+			if err := repl.SetSemiSyncWaitForReplicaCount(ctx, opts.SemiSyncWaitCount); err != nil {
+				return err
+			}
+		}
+		if opts.SemiSyncTimeoutMillis > 0 {
+			log.Info("Setting semi-sync timeout", "timeoutMillis", opts.SemiSyncTimeoutMillis)
+			if err := repl.SetSemiSyncTimeoutMillis(ctx, opts.SemiSyncTimeoutMillis); err != nil {
+				return err
+			}
+		}
+		return nil
+	}()
+	if restoreErr := restoreReadOnly(); restoreErr != nil {
+		if err == nil {
+			err = restoreErr
+		} else {
+			log.Error(restoreErr, "Failed to restore read_only state after semi-sync configuration")
+		}
+	}
+	return err
 }
 
 // Run is the PID1 entrypoint: it starts mysqld, waits for it to become
@@ -203,6 +276,12 @@ func Run(ctx context.Context, opts RunOptions) error {
 	if err != nil {
 		_ = sup.Shutdown(ctx)
 		return err
+	}
+	if opts.SemiSyncEnabled {
+		if err := configureSemiSync(ctx, controller.repl, opts); err != nil {
+			_ = sup.Shutdown(ctx)
+			return err
+		}
 	}
 	// When the owning Cluster is known, the in-Pod role reconciler drives role
 	// transitions dynamically; the run loop only resumes persisted replication.

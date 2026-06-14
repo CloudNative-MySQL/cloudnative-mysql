@@ -216,6 +216,17 @@ func (r *ClusterReconciler) reconcileFencing(ctx context.Context, cluster *mysql
 func (r *ClusterReconciler) reconcileDeletionGuard(ctx context.Context, cluster *mysqlv1alpha1.Cluster) (bool, ctrl.Result, error) {
 	bypass := cluster.Annotations[skipDeleteGuardAnnotation] == "true"
 
+	namespaceDeleting, err := r.namespaceDeleting(ctx, cluster.Namespace)
+	if err != nil {
+		return false, ctrl.Result{}, err
+	}
+	if namespaceDeleting {
+		if controllerutil.ContainsFinalizer(cluster, clusterFinalizer) {
+			return true, ctrl.Result{}, r.removeClusterFinalizer(ctx, cluster)
+		}
+		return true, ctrl.Result{}, nil
+	}
+
 	if cluster.DeletionTimestamp.IsZero() {
 		// Not being deleted: hold the finalizer unless the user opted out, in which
 		// case drop it so a later delete is unguarded.
@@ -244,6 +255,17 @@ func (r *ClusterReconciler) reconcileDeletionGuard(ctx context.Context, cluster 
 		r.Recorder.Event(cluster, corev1.EventTypeWarning, "DeletionBlocked", reason)
 	}
 	return true, ctrl.Result{RequeueAfter: readyResync}, nil
+}
+
+func (r *ClusterReconciler) namespaceDeleting(ctx context.Context, name string) (bool, error) {
+	ns := &corev1.Namespace{}
+	if err := r.Get(ctx, types.NamespacedName{Name: name}, ns); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return !ns.DeletionTimestamp.IsZero(), nil
 }
 
 func (r *ClusterReconciler) addClusterFinalizer(ctx context.Context, cluster *mysqlv1alpha1.Cluster) error {

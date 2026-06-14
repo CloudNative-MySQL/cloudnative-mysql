@@ -200,6 +200,15 @@ func (m *Manager) InstallSemiSyncReplica(ctx context.Context) error {
 	return m.installPlugin(ctx, InstallSemiSyncReplicaStatement(m.version))
 }
 
+// EnableSemiSync turns the source and replica semi-sync plugins on at runtime.
+func (m *Manager) EnableSemiSync(ctx context.Context) error {
+	naming := m.version.SemiSync()
+	if err := m.exec(ctx, SetGlobalStatement(naming.EnabledVarSource, "1")); err != nil {
+		return err
+	}
+	return m.exec(ctx, SetGlobalStatement(naming.EnabledVarReplica, "1"))
+}
+
 // SetSemiSyncWaitForReplicaCount sets, at runtime, how many replica
 // acknowledgements the semi-sync source waits for before committing
 // (rpl_semi_sync_source_wait_for_replica_count / the legacy slave-count
@@ -210,6 +219,12 @@ func (m *Manager) SetSemiSyncWaitForReplicaCount(ctx context.Context, count int)
 	return m.exec(ctx, SetGlobalStatement(naming.WaitForCountVar, strconv.Itoa(count)))
 }
 
+// SetSemiSyncTimeoutMillis sets the source wait timeout at runtime.
+func (m *Manager) SetSemiSyncTimeoutMillis(ctx context.Context, timeoutMillis int) error {
+	naming := m.version.SemiSync()
+	return m.exec(ctx, SetGlobalStatement(naming.TimeoutVar, strconv.Itoa(timeoutMillis)))
+}
+
 func (m *Manager) installPlugin(ctx context.Context, stmt string) error {
 	if _, err := m.conn.ExecContext(ctx, stmt); err != nil && !isPluginAlreadyInstalled(err) {
 		return fmt.Errorf("executing %q: %w", stmt, err)
@@ -217,8 +232,13 @@ func (m *Manager) installPlugin(ctx context.Context, stmt string) error {
 	return nil
 }
 
-// isPluginAlreadyInstalled reports whether the error is MySQL error 1968
-// (ER_PLUGIN_INSTALLED) so re-installing a plugin is idempotent.
+// isPluginAlreadyInstalled reports whether the error means the plugin is
+// already loaded, so re-installing a plugin is idempotent.
 func isPluginAlreadyInstalled(err error) bool {
-	return mysqlErrorNumber(err) == errPluginInstalled
+	switch mysqlErrorNumber(err) {
+	case errPluginInstalled, errFunctionAlreadyExists:
+		return true
+	default:
+		return false
+	}
 }

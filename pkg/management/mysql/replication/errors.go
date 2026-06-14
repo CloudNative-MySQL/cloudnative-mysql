@@ -26,6 +26,9 @@ import (
 const (
 	// errPluginInstalled is ER_PLUGIN_INSTALLED.
 	errPluginInstalled = 1968
+	// errFunctionAlreadyExists is ER_UDF_EXISTS. Percona can return it when
+	// INSTALL PLUGIN is replayed for an already-loaded semi-sync plugin.
+	errFunctionAlreadyExists = 1125
 	// errUnknownSystemVariable is ER_UNKNOWN_SYSTEM_VARIABLE.
 	errUnknownSystemVariable = 1193
 )

@@ -67,6 +67,9 @@ func NewCommand() *cobra.Command {
 		archiveRPOSeconds int
 		archivePurge      bool
 		mysqlbinlogPath   string
+		semiSync          bool
+		semiSyncWait      int
+		semiSyncTimeout   int
 
 		stopDelay            int
 		smartShutdownTimeout int
@@ -154,25 +157,28 @@ func NewCommand() *cobra.Command {
 			}
 
 			return instance.Run(cmd.Context(), instance.RunOptions{
-				MysqldPath:           mysqldPath,
-				ConfigFile:           configFile,
-				DataDir:              dataDir,
-				Socket:               socket,
-				Version:              serverVersion,
-				InstanceName:         instanceName,
-				Role:                 expectedRole,
-				Source:               source,
-				ClusterName:          clusterName,
-				Namespace:            namespace,
-				SourceTemplate:       sourceTemplate,
-				WebserverAddr:        webAddr,
-				HealthAddr:           healthAddr,
-				MetricsAddr:          metricsAddr,
-				MetricsTLS:           metricsTLS,
-				Backup:               backup,
-				Archiving:            archive,
-				StopDelay:            time.Duration(stopDelay) * time.Second,
-				SmartShutdownTimeout: time.Duration(smartShutdownTimeout) * time.Second,
+				MysqldPath:            mysqldPath,
+				ConfigFile:            configFile,
+				DataDir:               dataDir,
+				Socket:                socket,
+				Version:               serverVersion,
+				InstanceName:          instanceName,
+				Role:                  expectedRole,
+				Source:                source,
+				ClusterName:           clusterName,
+				Namespace:             namespace,
+				SourceTemplate:        sourceTemplate,
+				WebserverAddr:         webAddr,
+				HealthAddr:            healthAddr,
+				MetricsAddr:           metricsAddr,
+				MetricsTLS:            metricsTLS,
+				Backup:                backup,
+				Archiving:             archive,
+				SemiSyncEnabled:       semiSync,
+				SemiSyncWaitCount:     semiSyncWait,
+				SemiSyncTimeoutMillis: semiSyncTimeout,
+				StopDelay:             time.Duration(stopDelay) * time.Second,
+				SmartShutdownTimeout:  time.Duration(smartShutdownTimeout) * time.Second,
 				Control: pool.ControlParams{
 					User:         controlUser,
 					Password:     os.Getenv("MYSQL_CONTROL_PASSWORD"),
@@ -221,6 +227,9 @@ func NewCommand() *cobra.Command {
 	cmd.Flags().IntVar(&archiveRPOSeconds, "archive-rpo-seconds", 300, "Force a binlog rotation at least this often to bound RPO")
 	cmd.Flags().BoolVar(&archivePurge, "archive-purge", true, "Purge binary logs once archived (the active purge gate)")
 	cmd.Flags().StringVar(&mysqlbinlogPath, "mysqlbinlog", "mysqlbinlog", "Path to the mysqlbinlog binary")
+	cmd.Flags().BoolVar(&semiSync, "semi-sync", false, "Install and enable semi-synchronous replication plugins")
+	cmd.Flags().IntVar(&semiSyncWait, "semi-sync-wait-for-replica-count", 0, "Initial semi-sync acknowledgement count")
+	cmd.Flags().IntVar(&semiSyncTimeout, "semi-sync-timeout-millis", 0, "Semi-sync source wait timeout in milliseconds")
 	cmd.Flags().IntVar(&stopDelay, "stop-delay", 1800, "Maximum time in seconds for the instance to completely shut down")
 	cmd.Flags().IntVar(&smartShutdownTimeout, "smart-shutdown-timeout", 180, "Time in seconds for a graceful shutdown attempt before fast fallback")
 

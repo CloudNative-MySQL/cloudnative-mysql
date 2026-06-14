@@ -142,6 +142,7 @@ type ClusterReconciler struct {
 // +kubebuilder:rbac:groups=mysql.cloudnative-mysql.io,resources=clusterimagecatalogs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=mysql.cloudnative-mysql.io,resources=backups,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps;pods;pods/status;persistentvolumeclaims;secrets;services;serviceaccounts,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=cert-manager.io,resources=issuers;certificates,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=podmonitors,verbs=get;list;watch;create;update;patch;delete
@@ -344,29 +345,38 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if err := r.patchStatus(ctx, cluster, observed); err != nil {
 		return ctrl.Result{}, err
 	}
-	if !provisioned || !observed.Ready {
+	if !provisioned {
 		return ctrl.Result{RequeueAfter: provisioningRequeue}, nil
 	}
-	r.reconcileSteadyState(ctx, cluster, observed)
+	r.reconcileAvailability(ctx, cluster, observed)
+	if !observed.Ready {
+		return ctrl.Result{RequeueAfter: provisioningRequeue}, nil
+	}
+	r.reconcileSteadyState(ctx, cluster)
 	// Keep re-polling the instance managers so status (GTID, roles, readiness)
 	// stays fresh even when no Kubernetes event triggers a reconcile.
 	return ctrl.Result{RequeueAfter: readyResync}, nil
 }
 
+// reconcileAvailability runs best-effort availability adjustments that must
+// happen while the cluster is degraded, not only after it returns to Ready.
+func (r *ClusterReconciler) reconcileAvailability(ctx context.Context, cluster *mysqlv1alpha1.Cluster, observed observedCluster) {
+	log := logf.FromContext(ctx)
+	if err := r.reconcileSemiSync(ctx, cluster, observed); err != nil {
+		log.Info("Semi-sync self-healing pass failed, will retry", "error", err.Error())
+	}
+}
+
 // reconcileSteadyState runs the best-effort, post-Ready reconciliations:
-// declarative managed roles, backup retention and semi-sync self-healing.
-// Failures here are logged and retried on the next resync rather than failing
-// the whole reconcile.
-func (r *ClusterReconciler) reconcileSteadyState(ctx context.Context, cluster *mysqlv1alpha1.Cluster, observed observedCluster) {
+// declarative managed roles and backup retention. Failures here are logged and
+// retried on the next resync rather than failing the whole reconcile.
+func (r *ClusterReconciler) reconcileSteadyState(ctx context.Context, cluster *mysqlv1alpha1.Cluster) {
 	log := logf.FromContext(ctx)
 	if err := r.reconcileManagedRoles(ctx, cluster); err != nil {
 		log.Info("Managed roles reconciliation failed, will retry", "error", err.Error())
 	}
 	if err := r.reconcileRetention(ctx, cluster); err != nil {
 		log.Info("Backup retention pass failed, will retry", "error", err.Error())
-	}
-	if err := r.reconcileSemiSync(ctx, cluster, observed); err != nil {
-		log.Info("Semi-sync self-healing pass failed, will retry", "error", err.Error())
 	}
 }
 

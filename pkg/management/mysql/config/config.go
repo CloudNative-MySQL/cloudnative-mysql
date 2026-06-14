@@ -360,18 +360,18 @@ func (c *ServerConfig) managedSettings(ver version.Version) []pair {
 	if c.SemiSync.Enabled {
 		naming := ver.SemiSync()
 		pairs = append(pairs,
-			pair{naming.EnabledVarSource, "1"},
-			pair{naming.EnabledVarReplica, "1"},
+			pair{"loose-" + naming.EnabledVarSource, "1"},
+			pair{"loose-" + naming.EnabledVarReplica, "1"},
 		)
 		if c.SemiSync.WaitForReplicaCount > 0 {
 			pairs = append(pairs, pair{
-				naming.WaitForCountVar,
+				"loose-" + naming.WaitForCountVar,
 				strconv.Itoa(c.SemiSync.WaitForReplicaCount),
 			})
 		}
 		if c.SemiSync.TimeoutMillis > 0 {
 			pairs = append(pairs, pair{
-				naming.TimeoutVar,
+				"loose-" + naming.TimeoutVar,
 				strconv.Itoa(c.SemiSync.TimeoutMillis),
 			})
 		}

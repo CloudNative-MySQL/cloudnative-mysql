@@ -65,6 +65,39 @@ func TestReconcileSemiSyncPreferredReducesOnUnhealthyReplica(t *testing.T) {
 	}
 }
 
+func TestReconcileAvailabilityRunsSemiSyncWhenClusterIsDegraded(t *testing.T) {
+	t.Parallel()
+	control := &recordingControlClient{}
+	r := &ClusterReconciler{ControlClient: control}
+
+	cluster := semiSyncCluster(2, mysqlv1alpha1.DataDurabilityPreferred)
+	observed := observedWith("demo-1", "demo-2")
+	observed.Ready = false
+
+	r.reconcileAvailability(context.Background(), cluster, observed)
+
+	if got := control.semiSyncWaits["demo-1"]; got != 1 {
+		t.Fatalf("wait count = %d, want 1 while degraded", got)
+	}
+}
+
+func TestReconcileSemiSyncPreferredReducesForFencedReplica(t *testing.T) {
+	t.Parallel()
+	control := &recordingControlClient{}
+	r := &ClusterReconciler{ControlClient: control}
+
+	cluster := semiSyncCluster(2, mysqlv1alpha1.DataDurabilityPreferred)
+	observed := observedWith("demo-1", "demo-2", "demo-3")
+	observed.FencedInstances = []string{"demo-2"}
+
+	if err := r.reconcileSemiSync(context.Background(), cluster, observed); err != nil {
+		t.Fatal(err)
+	}
+	if got := control.semiSyncWaits["demo-1"]; got != 1 {
+		t.Fatalf("wait count = %d, want 1 with one fenced replica", got)
+	}
+}
+
 func TestReconcileSemiSyncPreferredRestoresWhenHealthy(t *testing.T) {
 	t.Parallel()
 	control := &recordingControlClient{}
@@ -140,7 +173,7 @@ func TestRenderMyCnfUsesBootstrapSafeSemiSyncWaitCountForPreferredDurability(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "rpl_semi_sync_source_wait_for_replica_count = 1") {
+	if !strings.Contains(out, "loose-rpl_semi_sync_source_wait_for_replica_count = 1") {
 		t.Fatalf("rendered my.cnf should start preferred semi-sync at one ack:\n%s", out)
 	}
 }
@@ -153,7 +186,25 @@ func TestRenderMyCnfKeepsConfiguredSemiSyncWaitCountForRequiredDurability(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "rpl_semi_sync_source_wait_for_replica_count = 2") {
+	if !strings.Contains(out, "loose-rpl_semi_sync_source_wait_for_replica_count = 2") {
 		t.Fatalf("rendered my.cnf should keep required semi-sync at minSyncReplicas:\n%s", out)
+	}
+}
+
+func TestRunArgsEnableSemiSyncRuntimeConfiguration(t *testing.T) {
+	t.Parallel()
+
+	timeout := int32(5000)
+	cluster := semiSyncCluster(2, mysqlv1alpha1.DataDurabilityPreferred)
+	cluster.Spec.MySQL.SemiSync.TimeoutMillis = &timeout
+	args := runArgs(cluster, testPlan(), instancePlan{})
+	for _, want := range []string{
+		"--semi-sync",
+		"--semi-sync-wait-for-replica-count=1",
+		"--semi-sync-timeout-millis=5000",
+	} {
+		if !strings.Contains(strings.Join(args, "\n"), want) {
+			t.Fatalf("run args missing %q: %v", want, args)
+		}
 	}
 }

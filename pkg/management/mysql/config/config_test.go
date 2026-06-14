@@ -161,10 +161,10 @@ func TestRenderSemiSync(t *testing.T) {
 	c.SemiSync = SemiSync{Enabled: true, WaitForReplicaCount: 1, TimeoutMillis: 5000}
 	out := mustRender(t, c)
 
-	assertContains(t, out, "rpl_semi_sync_source_enabled = 1")
-	assertContains(t, out, "rpl_semi_sync_replica_enabled = 1")
-	assertContains(t, out, "rpl_semi_sync_source_wait_for_replica_count = 1")
-	assertContains(t, out, "rpl_semi_sync_source_timeout = 5000")
+	assertContains(t, out, "loose-rpl_semi_sync_source_enabled = 1")
+	assertContains(t, out, "loose-rpl_semi_sync_replica_enabled = 1")
+	assertContains(t, out, "loose-rpl_semi_sync_source_wait_for_replica_count = 1")
+	assertContains(t, out, "loose-rpl_semi_sync_source_timeout = 5000")
 }
 
 func TestRenderAdminInterfaceModern(t *testing.T) {

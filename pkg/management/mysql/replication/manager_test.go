@@ -242,9 +242,36 @@ func TestInstallSemiSyncIdempotent(t *testing.T) {
 
 	mock.ExpectExec("INSTALL PLUGIN rpl_semi_sync_source").
 		WillReturnError(&mysql.MySQLError{Number: 1968, Message: "plugin already installed"})
+	mock.ExpectExec("INSTALL PLUGIN rpl_semi_sync_replica").
+		WillReturnError(&mysql.MySQLError{Number: 1125, Message: "function already exists"})
 
 	if err := m.InstallSemiSyncSource(context.Background()); err != nil {
 		t.Fatalf("InstallSemiSyncSource should ignore 'already installed': %v", err)
+	}
+	if err := m.InstallSemiSyncReplica(context.Background()); err != nil {
+		t.Fatalf("InstallSemiSyncReplica should ignore 'function already exists': %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestConfigureSemiSyncRuntimeVariables(t *testing.T) {
+	m, mock := newManager(t, "8.0.36")
+
+	mock.ExpectExec("SET GLOBAL rpl_semi_sync_source_enabled = 1").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SET GLOBAL rpl_semi_sync_replica_enabled = 1").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SET GLOBAL rpl_semi_sync_source_wait_for_replica_count = 2").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SET GLOBAL rpl_semi_sync_source_timeout = 5000").WillReturnResult(sqlmock.NewResult(0, 0))
+
+	if err := m.EnableSemiSync(context.Background()); err != nil {
+		t.Fatalf("EnableSemiSync: %v", err)
+	}
+	if err := m.SetSemiSyncWaitForReplicaCount(context.Background(), 2); err != nil {
+		t.Fatalf("SetSemiSyncWaitForReplicaCount: %v", err)
+	}
+	if err := m.SetSemiSyncTimeoutMillis(context.Background(), 5000); err != nil {
+		t.Fatalf("SetSemiSyncTimeoutMillis: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Error(err)

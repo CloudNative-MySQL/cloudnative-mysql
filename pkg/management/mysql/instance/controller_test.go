@@ -274,3 +274,34 @@ func TestPromoteDemoteDelegate(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func TestConfigureSemiSyncTemporarilyClearsReadOnly(t *testing.T) {
+	c, mock := newController(t, nil)
+	ctx := context.Background()
+
+	mock.ExpectQuery("SELECT @@GLOBAL.read_only").
+		WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow("1"))
+	mock.ExpectQuery("SELECT @@GLOBAL.super_read_only").
+		WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow("1"))
+	mock.ExpectExec("SET GLOBAL super_read_only = OFF").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SET GLOBAL read_only = OFF").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSTALL PLUGIN rpl_semi_sync_source").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSTALL PLUGIN rpl_semi_sync_replica").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SET GLOBAL rpl_semi_sync_source_enabled = 1").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SET GLOBAL rpl_semi_sync_replica_enabled = 1").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SET GLOBAL rpl_semi_sync_source_wait_for_replica_count = 1").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SET GLOBAL rpl_semi_sync_source_timeout = 10000").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SET GLOBAL read_only = ON").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("SET GLOBAL super_read_only = ON").WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err := configureSemiSync(ctx, c.repl, RunOptions{
+		SemiSyncWaitCount:     1,
+		SemiSyncTimeoutMillis: 10000,
+	})
+	if err != nil {
+		t.Fatalf("configureSemiSync: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Error(err)
+	}
+}

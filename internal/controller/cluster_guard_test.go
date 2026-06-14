@@ -309,6 +309,15 @@ func deletionGuardReconciler(t *testing.T, cluster *mysqlv1alpha1.Cluster) *Clus
 	}
 }
 
+func deletionGuardReconcilerWithNamespace(t *testing.T, cluster *mysqlv1alpha1.Cluster, ns *corev1.Namespace) *ClusterReconciler {
+	t.Helper()
+	scheme := testScheme(t)
+	return &ClusterReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(ns, cluster).Build(),
+		Scheme: scheme,
+	}
+}
+
 func clusterHasFinalizer(t *testing.T, r *ClusterReconciler, cluster *mysqlv1alpha1.Cluster) bool {
 	t.Helper()
 	latest := &mysqlv1alpha1.Cluster{}
@@ -397,5 +406,31 @@ func TestDeletionGuardBypassAllowsDeletion(t *testing.T) {
 	}
 	if err != nil && !apierrors.IsNotFound(err) {
 		t.Fatal(err)
+	}
+}
+
+func TestDeletionGuardAllowsNamespaceDeletion(t *testing.T) {
+	t.Parallel()
+	cluster := baseCluster()
+	controllerutil.AddFinalizer(cluster, clusterFinalizer)
+	now := metav1.Now()
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              cluster.Namespace,
+			DeletionTimestamp: &now,
+			Finalizers:        []string{"kubernetes"},
+		},
+	}
+	r := deletionGuardReconcilerWithNamespace(t, cluster, ns)
+
+	deleting, _, err := r.reconcileDeletionGuard(context.Background(), cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deleting {
+		t.Fatal("deleting = false, want true while namespace is terminating")
+	}
+	if clusterHasFinalizer(t, r, cluster) {
+		t.Fatal("finalizer kept while namespace is terminating")
 	}
 }

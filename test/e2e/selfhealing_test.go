@@ -70,29 +70,31 @@ var _ = Describe("Self-healing", Ordered, func() {
 		}, 90*time.Second, 10*time.Second).Should(Succeed())
 	})
 
-	It("lowers the acknowledgement count to stay writable when a sync replica is lost, then restores it", func() {
+	It("lowers the acknowledgement count to stay writable when a sync replica is fenced, then restores it", func() {
 		primary := clusterPrimary(cluster)
 		replica := otherInstance(cluster, replicas, primary)
 
-		By(fmt.Sprintf("force-deleting replica %s to drop below minSyncReplicas healthy replicas", replica))
-		_, err := kubectl("delete", "pod", replica, "-n", testNamespace, "--grace-period=0", "--force")
-		Expect(err).NotTo(HaveOccurred(), "failed to force-delete replica")
+		By(fmt.Sprintf("fencing replica %s to drop below minSyncReplicas healthy replicas", replica))
+		_, err := kubectl("annotate", "pod", replica, "-n", testNamespace,
+			fencingAnnotation+"=true", "--overwrite")
+		Expect(err).NotTo(HaveOccurred(), "failed to fence replica")
 
 		By("verifying the operator self-heals the wait count below minSyncReplicas (preferred)")
 		Eventually(func(g Gomega) {
 			g.Expect(semiSyncWaitCount(g, primary, rootPass)).To(BeNumerically("<", minSync),
-				"preferred durability must lower the acknowledgement count while a replica is down")
-		}, 5*time.Minute, 3*time.Second).Should(Succeed())
+				"preferred durability must lower the acknowledgement count while a replica is fenced")
+		}, 5*time.Minute, 2*time.Second).Should(Succeed())
 
 		By("verifying the primary stays writable during the degraded window")
 		_, err = mysqlExec(primary, "root", rootPass, "",
 			"CREATE DATABASE IF NOT EXISTS selfheal_probe; "+
 				"CREATE TABLE IF NOT EXISTS selfheal_probe.t (id INT PRIMARY KEY); "+
 				"REPLACE INTO selfheal_probe.t VALUES (1);")
-		Expect(err).NotTo(HaveOccurred(), "primary must accept writes while a sync replica is missing")
+		Expect(err).NotTo(HaveOccurred(), "primary must accept writes while a sync replica is fenced")
 
-		By("waiting for the replica to rejoin and the cluster to become Ready again")
-		expectClusterReady(cluster, replicas, 12*time.Minute)
+		By("unfencing the replica")
+		_, err = kubectl("annotate", "pod", replica, "-n", testNamespace, fencingAnnotation+"-")
+		Expect(err).NotTo(HaveOccurred(), "failed to unfence replica")
 
 		By("verifying the wait count is restored to minSyncReplicas once replicas recover")
 		Eventually(func(g Gomega) {

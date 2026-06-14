@@ -33,8 +33,9 @@ import (
 // count as replicas recover. Under "required" the count stays fixed and writes
 // block until enough replicas acknowledge.
 //
-// It is best-effort and runs only once the cluster is Ready: failures are
-// logged and retried on the next resync rather than failing the reconcile.
+// It is best-effort and can run while the cluster is degraded, as long as the
+// primary is reachable. Failures are logged by the caller and retried on the
+// next resync rather than failing the reconcile.
 func (r *ClusterReconciler) reconcileSemiSync(ctx context.Context, cluster *mysqlv1alpha1.Cluster, observed observedCluster) error {
 	minSync := cluster.Spec.MinSyncReplicas
 	if !semiSyncEnabled(cluster) || minSync <= 0 {
@@ -81,7 +82,9 @@ func healthyReplicaCount(observed observedCluster) int {
 		if name == observed.PrimaryName || status == nil {
 			continue
 		}
-		if status.IsReady && !slices.Contains(observed.DivergedInstances, name) {
+		if status.IsReady &&
+			!slices.Contains(observed.DivergedInstances, name) &&
+			!slices.Contains(observed.FencedInstances, name) {
 			healthy++
 		}
 	}

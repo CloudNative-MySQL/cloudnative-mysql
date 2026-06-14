@@ -252,6 +252,15 @@ func runArgs(cluster *mysqlv1alpha1.Cluster, _ clusterPlan, _ instancePlan) []st
 			fmt.Sprintf("--archive-rpo-seconds=%d", archiveRPOSeconds(cluster)),
 		)
 	}
+	if cluster.Spec.MySQL.SemiSync != nil && cluster.Spec.MySQL.SemiSync.Enabled {
+		args = append(args,
+			"--semi-sync",
+			fmt.Sprintf("--semi-sync-wait-for-replica-count=%d", initialSemiSyncWaitForReplicaCount(cluster)),
+		)
+		if cluster.Spec.MySQL.SemiSync.TimeoutMillis != nil {
+			args = append(args, fmt.Sprintf("--semi-sync-timeout-millis=%d", *cluster.Spec.MySQL.SemiSync.TimeoutMillis))
+		}
+	}
 	args = append(args,
 		fmt.Sprintf("--stop-delay=%d", cluster.GetMaxStopDelay()),
 		fmt.Sprintf("--smart-shutdown-timeout=%d", cluster.GetSmartShutdownTimeout()),

@@ -24,6 +24,12 @@ rules:
   - watch
 - apiGroups:
   - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+- apiGroups:
+  - ""
   - events.k8s.io
   resources:
   - events
