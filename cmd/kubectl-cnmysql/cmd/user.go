@@ -77,6 +77,9 @@ func newUserCreateCommand() *cobra.Command {
 			if name == "" {
 				return fmt.Errorf("--name is required")
 			}
+			if user.IsReservedUser(name) {
+				return fmt.Errorf("%q is a reserved operator account and cannot be managed", name)
+			}
 			password, err := plugin.ReadPassword(passwdStdin)
 			if err != nil {
 				return err
@@ -133,6 +136,9 @@ func newUserAlterCommand() *cobra.Command {
 			if name == "" {
 				return fmt.Errorf("--name is required")
 			}
+			if user.IsReservedUser(name) {
+				return fmt.Errorf("%q is a reserved operator account and cannot be managed", name)
+			}
 			req := user.AlterUserRequest{Name: name, Host: host}
 			if passwdStdin {
 				password, err := plugin.ReadPassword(true)
@@ -175,6 +181,9 @@ func newUserDropCommand() *cobra.Command {
 			name, _ := cmd.Flags().GetString("name")
 			if name == "" {
 				return fmt.Errorf("--name is required")
+			}
+			if user.IsReservedUser(name) {
+				return fmt.Errorf("%q is a reserved operator account and cannot be managed", name)
 			}
 			ctx := cmd.Context()
 			cc, closeFn, err := userTarget(ctx, firstArg(args))

@@ -78,6 +78,9 @@ func newDatabaseDropCommand() *cobra.Command {
 			if name == "" {
 				return fmt.Errorf("--name is required")
 			}
+			if user.IsReservedDatabase(name) {
+				return fmt.Errorf("%q is a MySQL system database and cannot be dropped", name)
+			}
 			ctx := cmd.Context()
 			cc, closeFn, err := userTarget(ctx, firstArg(args))
 			if err != nil {
