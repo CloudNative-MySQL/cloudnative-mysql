@@ -116,7 +116,12 @@ func (r *ClusterReconciler) ensureRoutingService(
 // roleSelector returns the Pod selector for the given service role. The
 // operator owns the selector; users cannot override it.
 func roleSelector(cluster *mysqlv1alpha1.Cluster, role mysqlv1alpha1.ServiceSelectorType) map[string]string {
-	selector := map[string]string{clusterLabel: cluster.Name}
+	// routable=true gates every routing Service so a fenced Pod (routable=false)
+	// is dropped from rw/ro/r and user-defined services alike.
+	selector := map[string]string{
+		clusterLabel:  cluster.Name,
+		routableLabel: routableTrue,
+	}
 	switch role {
 	case mysqlv1alpha1.ServiceSelectorTypeRW:
 		selector[roleLabel] = rolePrimary

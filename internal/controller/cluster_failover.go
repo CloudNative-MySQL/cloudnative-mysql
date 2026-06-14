@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -117,6 +118,10 @@ func selectFailoverCandidate(observed observedCluster) (string, string) {
 	var candidates []string
 	for _, name := range observed.InstanceNames {
 		if name == observed.PrimaryName {
+			continue
+		}
+		// A fenced instance is deliberately held out of service; never promote it.
+		if slices.Contains(observed.FencedInstances, name) {
 			continue
 		}
 		status, ok := observed.StatusByInstance[name]

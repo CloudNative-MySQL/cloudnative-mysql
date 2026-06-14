@@ -519,6 +519,46 @@ func TestEnsurePodDoesNotRecreateForPrimaryRoleChange(t *testing.T) {
 	}
 }
 
+func TestEnsurePodPreservesFencingAnnotation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cluster := baseCluster()
+	plan := testPlan()
+	inst := plan.instanceFor(cluster, 1)
+	labels := labelsFor(cluster, inst.Name, roleOf(inst))
+	spec := (&ClusterReconciler{}).podSpec(cluster, plan, inst)
+	annotations, err := podAnnotations(cluster, plan, inst, labels, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	annotations[fencingAnnotation] = "true"
+	existingPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        inst.Name,
+			Namespace:   cluster.Namespace,
+			Labels:      labels,
+			Annotations: annotations,
+		},
+		Spec: spec,
+	}
+	scheme := testScheme(t)
+	reconciler := &ClusterReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, existingPod).Build(),
+		Scheme: scheme,
+	}
+
+	if err := reconciler.ensurePod(ctx, cluster, plan, inst); err != nil {
+		t.Fatal(err)
+	}
+	got := &corev1.Pod{}
+	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: inst.Name}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Annotations[fencingAnnotation] != "true" {
+		t.Fatalf("fencing annotation = %q, want true", got.Annotations[fencingAnnotation])
+	}
+}
+
 func TestUnsupportedReasonNamesDeferredMilestones(t *testing.T) {
 	t.Parallel()
 	// Replicas are now supported.

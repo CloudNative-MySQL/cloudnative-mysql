@@ -99,6 +99,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result
 	current := cluster.Status.CurrentPrimary
 	amPrimary := status.Role == webserver.RolePrimary
 
+	// I am fenced: stay read-only regardless of role so I accept no writes and the
+	// continuous archiver (which only ships from a writable primary) stands down.
+	// The operator has already pulled me out of routing. Clearing the fence lets a
+	// later reconcile resume normal role convergence.
+	if isFenced(cluster, me) {
+		if amPrimary {
+			_ = r.Local.Demote(ctx)
+		}
+		log.Info("Instance is fenced; staying read-only", "instance", me)
+		return ctrl.Result{RequeueAfter: steadyRequeue}, nil
+	}
+
 	// I am the designated primary.
 	if target == me {
 		// Already a writable primary: just keep currentPrimary in step.
@@ -210,6 +222,10 @@ func caughtUp(status *webserver.Status) bool {
 
 func isDiverged(cluster *mysqlv1alpha1.Cluster, name string) bool {
 	return slices.Contains(cluster.Status.DivergedInstances, name)
+}
+
+func isFenced(cluster *mysqlv1alpha1.Cluster, name string) bool {
+	return slices.Contains(cluster.Status.FencedInstances, name)
 }
 
 // SetupWithManager wires the reconciler to watch only the owning Cluster.

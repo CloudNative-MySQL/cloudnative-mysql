@@ -107,6 +107,49 @@ coordinate, which is a split-brain risk. The check runs locally inside the
 instance, so a genuinely isolated node still restarts itself even while it is
 unreachable from the control plane.
 
+## Fencing an instance
+
+Fencing takes a single instance out of service without deleting it or its data.
+Annotate the instance Pod:
+
+```bash
+kubectl annotate pod <cluster>-2 cnmysql.cloudnative-mysql.io/fencing=true
+```
+
+The operator then drops the Pod from every routing Service (rw, ro, r, and any
+user-defined ones) by clearing its `routable` label, and records it under
+`status.fencedInstances`. The instance's in-Pod reconciler reads that list and
+holds the instance read-only, so it accepts no writes and its continuous
+archiver stands down. A fenced instance is also skipped as a failover candidate,
+so the operator never promotes it. Clearing the annotation reverses all of this
+and the instance rejoins normal routing and role reconciliation:
+
+```bash
+kubectl annotate pod <cluster>-2 cnmysql.cloudnative-mysql.io/fencing-
+```
+
+Fencing the primary stops writes for the whole cluster, because the rw Service
+loses its only endpoint. That is deliberate: use it to freeze an instance for
+inspection or maintenance rather than as a failover trigger.
+
+## Deletion guard
+
+By default the operator keeps a finalizer on every Cluster so an accidental
+`kubectl delete cluster` does not immediately tear down running instances. The
+delete is accepted by the API server, but the Cluster stays in `Terminating`
+with its Pods and PVCs intact while the guard holds the finalizer. The operator
+records a `DeletionBlocked` event explaining what to do.
+
+To actually delete the cluster, set the bypass annotation, which releases the
+finalizer and lets the deletion complete:
+
+```bash
+kubectl annotate cluster <cluster> cnmysql.cloudnative-mysql.io/skipDeleteGuard=true
+kubectl delete cluster <cluster>
+```
+
+Setting the annotation before the first delete skips the guard entirely.
+
 ## Role services
 
 CNMySQL creates three default Services:
@@ -260,6 +303,7 @@ Useful status fields during topology changes:
 - `targetPrimaryTimestamp`: when a primary change was requested.
 - `primaryFailingSince`: when the current primary became unhealthy.
 - `divergedInstances`: instances excluded because their GTID set is unsafe.
+- `fencedInstances`: instances fenced out of routing and held read-only.
 - `gtidExecutedByInstance`: last observed GTID state per instance.
 
 Watch Events for phase transitions such as switchover, failover, fencing, and

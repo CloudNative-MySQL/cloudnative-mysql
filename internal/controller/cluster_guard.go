@@ -18,12 +18,16 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
@@ -145,4 +149,115 @@ func primaryPDBName(cluster *mysqlv1alpha1.Cluster) string {
 
 func replicaPDBName(cluster *mysqlv1alpha1.Cluster) string {
 	return cluster.Name + "-replicas"
+}
+
+// isPodFenced reports whether an instance Pod carries the fencing annotation set
+// to "true".
+func isPodFenced(pod *corev1.Pod) bool {
+	return pod.Annotations[fencingAnnotation] == "true"
+}
+
+// reconcileFencing keeps each instance Pod's routable label in step with its
+// fencing annotation. A fenced Pod gets routable=false, which drops it from every
+// routing Service (their selectors require routable=true); clearing the
+// annotation restores routable=true. The in-Pod reconciler separately reads
+// status.fencedInstances and holds the fenced instance read-only.
+func (r *ClusterReconciler) reconcileFencing(ctx context.Context, cluster *mysqlv1alpha1.Cluster, observed observedCluster) error {
+	fenced := map[string]bool{}
+	for _, name := range observed.FencedInstances {
+		fenced[name] = true
+	}
+	for _, name := range observed.InstanceNames {
+		pod := &corev1.Pod{}
+		if err := r.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: name}, pod); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return err
+		}
+		if pod.DeletionTimestamp != nil {
+			continue
+		}
+		desired := routableTrue
+		if fenced[name] {
+			desired = routableFalse
+		}
+		if pod.Labels[routableLabel] == desired {
+			continue
+		}
+		before := pod.DeepCopy()
+		if pod.Labels == nil {
+			pod.Labels = map[string]string{}
+		}
+		pod.Labels[routableLabel] = desired
+		if err := r.Patch(ctx, pod, client.MergeFrom(before)); err != nil {
+			return err
+		}
+		if r.Recorder != nil {
+			verb := "Unfenced"
+			if fenced[name] {
+				verb = "Fenced"
+			}
+			r.Recorder.Event(cluster, corev1.EventTypeWarning, verb,
+				fmt.Sprintf("Instance %s %s", name, verb))
+		}
+	}
+	return nil
+}
+
+// reconcileDeletionGuard implements the Cluster deletion guard. While the
+// skipDeleteGuard annotation is unset it keeps a finalizer on the Cluster, so an
+// accidental `kubectl delete cluster` leaves the object Terminating with its
+// instances (and data) intact rather than tearing everything down. Setting the
+// annotation to "true" releases the finalizer so the deletion completes.
+//
+// It returns handled=true when the Cluster is being deleted; the caller should
+// stop reconciling and return the given result.
+func (r *ClusterReconciler) reconcileDeletionGuard(ctx context.Context, cluster *mysqlv1alpha1.Cluster) (bool, ctrl.Result, error) {
+	bypass := cluster.Annotations[skipDeleteGuardAnnotation] == "true"
+
+	if cluster.DeletionTimestamp.IsZero() {
+		// Not being deleted: hold the finalizer unless the user opted out, in which
+		// case drop it so a later delete is unguarded.
+		switch {
+		case bypass && controllerutil.ContainsFinalizer(cluster, clusterFinalizer):
+			return false, ctrl.Result{}, r.removeClusterFinalizer(ctx, cluster)
+		case !bypass && !controllerutil.ContainsFinalizer(cluster, clusterFinalizer):
+			return false, ctrl.Result{}, r.addClusterFinalizer(ctx, cluster)
+		}
+		return false, ctrl.Result{}, nil
+	}
+
+	// Being deleted.
+	if !controllerutil.ContainsFinalizer(cluster, clusterFinalizer) {
+		return true, ctrl.Result{}, nil
+	}
+	if bypass {
+		return true, ctrl.Result{}, r.removeClusterFinalizer(ctx, cluster)
+	}
+	// Block: keep the finalizer and surface why. The user must set
+	// skipDeleteGuard=true to actually delete the cluster.
+	reason := fmt.Sprintf(
+		"Deletion of cluster %s is blocked by the deletion guard; set annotation %s=true to proceed",
+		cluster.Name, skipDeleteGuardAnnotation)
+	if r.Recorder != nil {
+		r.Recorder.Event(cluster, corev1.EventTypeWarning, "DeletionBlocked", reason)
+	}
+	return true, ctrl.Result{RequeueAfter: readyResync}, nil
+}
+
+func (r *ClusterReconciler) addClusterFinalizer(ctx context.Context, cluster *mysqlv1alpha1.Cluster) error {
+	before := cluster.DeepCopy()
+	if !controllerutil.AddFinalizer(cluster, clusterFinalizer) {
+		return nil
+	}
+	return r.Patch(ctx, cluster, client.MergeFrom(before))
+}
+
+func (r *ClusterReconciler) removeClusterFinalizer(ctx context.Context, cluster *mysqlv1alpha1.Cluster) error {
+	before := cluster.DeepCopy()
+	if !controllerutil.RemoveFinalizer(cluster, clusterFinalizer) {
+		return nil
+	}
+	return r.Patch(ctx, cluster, client.MergeFrom(before))
 }

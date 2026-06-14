@@ -20,13 +20,17 @@ import (
 	"context"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
+	"github.com/yyewolf/cnmysql/pkg/management/mysql/webserver"
 )
 
 func pdbReconciler(t *testing.T, cluster *mysqlv1alpha1.Cluster) *ClusterReconciler {
@@ -198,5 +202,200 @@ func TestReconcilePDBSingleInstanceMaintenanceDeletesPrimary(t *testing.T) {
 	}
 	if _, err := getPDB(t, r, cluster, primaryPDBName(cluster)); !apierrors.IsNotFound(err) {
 		t.Fatalf("primary PDB get = %v, want not found during single-instance maintenance", err)
+	}
+}
+
+// fencedPod is a ready instance Pod that optionally carries the fencing
+// annotation and starts out routable.
+func fencedPod(cluster *mysqlv1alpha1.Cluster, name string, fenced bool) *corev1.Pod {
+	pod := readyPod(cluster, name, roleReplica)
+	pod.Labels[routableLabel] = routableTrue
+	if fenced {
+		pod.Annotations = map[string]string{fencingAnnotation: "true"}
+	}
+	return pod
+}
+
+func podRoutable(t *testing.T, r *ClusterReconciler, cluster *mysqlv1alpha1.Cluster, name string) string {
+	t.Helper()
+	pod := &corev1.Pod{}
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: cluster.Namespace, Name: name}, pod); err != nil {
+		t.Fatal(err)
+	}
+	return pod.Labels[routableLabel]
+}
+
+func TestReconcileFencingTogglesRoutableLabel(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cluster := baseCluster()
+	cluster.Spec.Instances = 3
+	scheme := testScheme(t)
+	r := &ClusterReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+			cluster,
+			fencedPod(cluster, testPrimary, false),
+			fencedPod(cluster, testReplica2, true),
+			fencedPod(cluster, testReplica3, false),
+		).Build(),
+		Scheme: scheme,
+	}
+
+	observed := observedCluster{
+		InstanceNames:   []string{testPrimary, testReplica2, testReplica3},
+		FencedInstances: []string{testReplica2},
+	}
+	if err := r.reconcileFencing(ctx, cluster, observed); err != nil {
+		t.Fatal(err)
+	}
+	if got := podRoutable(t, r, cluster, testReplica2); got != routableFalse {
+		t.Fatalf("%s routable = %q, want %q (fenced)", testReplica2, got, routableFalse)
+	}
+	if got := podRoutable(t, r, cluster, testPrimary); got != routableTrue {
+		t.Fatalf("%s routable = %q, want %q (not fenced)", testPrimary, got, routableTrue)
+	}
+
+	// Clearing the fence restores routability.
+	observed.FencedInstances = nil
+	if err := r.reconcileFencing(ctx, cluster, observed); err != nil {
+		t.Fatal(err)
+	}
+	if got := podRoutable(t, r, cluster, testReplica2); got != routableTrue {
+		t.Fatalf("%s routable = %q, want %q after unfencing", testReplica2, got, routableTrue)
+	}
+}
+
+func TestRoleSelectorGatesOnRoutable(t *testing.T) {
+	t.Parallel()
+	cluster := baseCluster()
+	for _, role := range []mysqlv1alpha1.ServiceSelectorType{
+		mysqlv1alpha1.ServiceSelectorTypeRW,
+		mysqlv1alpha1.ServiceSelectorTypeRO,
+		mysqlv1alpha1.ServiceSelectorTypeR,
+	} {
+		if got := roleSelector(cluster, role)[routableLabel]; got != routableTrue {
+			t.Fatalf("role %q selector routable = %q, want %q", role, got, routableTrue)
+		}
+	}
+}
+
+func TestSelectFailoverCandidateSkipsFenced(t *testing.T) {
+	t.Parallel()
+	observed := observedCluster{
+		PrimaryName:   testPrimary,
+		InstanceNames: []string{testPrimary, testReplica2, testReplica3},
+		GTIDByInstance: map[string]string{
+			testReplica2: testGTID,
+			testReplica3: "uuid:1-8",
+		},
+		StatusByInstance: map[string]*webserver.Status{
+			testReplica2: healthyReplicaStatus(testReplica2, testGTID),
+			testReplica3: healthyReplicaStatus(testReplica3, "uuid:1-8"),
+		},
+		// demo-2 has the most complete GTID but is fenced, so demo-3 is promoted.
+		FencedInstances: []string{testReplica2},
+	}
+	if got, reason := selectFailoverCandidate(observed); got != testReplica3 {
+		t.Fatalf("candidate = %q (reason %q), want demo-3 (demo-2 is fenced)", got, reason)
+	}
+}
+
+func deletionGuardReconciler(t *testing.T, cluster *mysqlv1alpha1.Cluster) *ClusterReconciler {
+	t.Helper()
+	scheme := testScheme(t)
+	return &ClusterReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build(),
+		Scheme: scheme,
+	}
+}
+
+func clusterHasFinalizer(t *testing.T, r *ClusterReconciler, cluster *mysqlv1alpha1.Cluster) bool {
+	t.Helper()
+	latest := &mysqlv1alpha1.Cluster{}
+	if err := r.Get(context.Background(), client.ObjectKeyFromObject(cluster), latest); err != nil {
+		t.Fatal(err)
+	}
+	return controllerutil.ContainsFinalizer(latest, clusterFinalizer)
+}
+
+func TestDeletionGuardAddsFinalizer(t *testing.T) {
+	t.Parallel()
+	cluster := baseCluster()
+	r := deletionGuardReconciler(t, cluster)
+
+	deleting, _, err := r.reconcileDeletionGuard(context.Background(), cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleting {
+		t.Fatal("deleting = true, want false for a live cluster")
+	}
+	if !clusterHasFinalizer(t, r, cluster) {
+		t.Fatal("finalizer not added on a guarded cluster")
+	}
+}
+
+func TestDeletionGuardBypassDropsFinalizer(t *testing.T) {
+	t.Parallel()
+	cluster := baseCluster()
+	controllerutil.AddFinalizer(cluster, clusterFinalizer)
+	cluster.Annotations = map[string]string{skipDeleteGuardAnnotation: "true"}
+	r := deletionGuardReconciler(t, cluster)
+
+	if _, _, err := r.reconcileDeletionGuard(context.Background(), cluster); err != nil {
+		t.Fatal(err)
+	}
+	if clusterHasFinalizer(t, r, cluster) {
+		t.Fatal("finalizer kept despite skipDeleteGuard=true")
+	}
+}
+
+func TestDeletionGuardBlocksDeletion(t *testing.T) {
+	t.Parallel()
+	cluster := baseCluster()
+	controllerutil.AddFinalizer(cluster, clusterFinalizer)
+	now := metav1.Now()
+	cluster.DeletionTimestamp = &now
+	r := deletionGuardReconciler(t, cluster)
+
+	deleting, result, err := r.reconcileDeletionGuard(context.Background(), cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deleting {
+		t.Fatal("deleting = false, want true while terminating")
+	}
+	if result.RequeueAfter == 0 {
+		t.Fatal("expected a requeue while the deletion is blocked")
+	}
+	if !clusterHasFinalizer(t, r, cluster) {
+		t.Fatal("finalizer dropped without skipDeleteGuard; deletion should be blocked")
+	}
+}
+
+func TestDeletionGuardBypassAllowsDeletion(t *testing.T) {
+	t.Parallel()
+	cluster := baseCluster()
+	controllerutil.AddFinalizer(cluster, clusterFinalizer)
+	now := metav1.Now()
+	cluster.DeletionTimestamp = &now
+	cluster.Annotations = map[string]string{skipDeleteGuardAnnotation: "true"}
+	r := deletionGuardReconciler(t, cluster)
+
+	deleting, _, err := r.reconcileDeletionGuard(context.Background(), cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deleting {
+		t.Fatal("deleting = false, want true while terminating")
+	}
+	// Dropping the last finalizer lets the delete complete, so the object is gone.
+	latest := &mysqlv1alpha1.Cluster{}
+	err = r.Get(context.Background(), client.ObjectKeyFromObject(cluster), latest)
+	if err == nil && controllerutil.ContainsFinalizer(latest, clusterFinalizer) {
+		t.Fatal("finalizer kept despite skipDeleteGuard=true during deletion")
+	}
+	if err != nil && !apierrors.IsNotFound(err) {
+		t.Fatal(err)
 	}
 }

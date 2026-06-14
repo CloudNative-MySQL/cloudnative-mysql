@@ -138,7 +138,7 @@ func renderMyCnf(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instance
 	semiSync := mysqlconfig.SemiSync{}
 	if cluster.Spec.MySQL.SemiSync != nil {
 		semiSync.Enabled = cluster.Spec.MySQL.SemiSync.Enabled
-		semiSync.WaitForReplicaCount = cluster.Spec.MinSyncReplicas
+		semiSync.WaitForReplicaCount = initialSemiSyncWaitForReplicaCount(cluster)
 		if cluster.Spec.MySQL.SemiSync.TimeoutMillis != nil {
 			semiSync.TimeoutMillis = int(*cluster.Spec.MySQL.SemiSync.TimeoutMillis)
 		}
@@ -170,6 +170,17 @@ func renderMyCnf(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instance
 		SemiSync:       semiSync,
 		Archiving:      archivingConfig(cluster),
 	}).Render()
+}
+
+func initialSemiSyncWaitForReplicaCount(cluster *mysqlv1alpha1.Cluster) int {
+	count := cluster.Spec.MinSyncReplicas
+	if count <= 0 {
+		return 0
+	}
+	if semiSyncDurabilityPreferred(cluster) {
+		return 1
+	}
+	return count
 }
 
 // archivingConfig resolves the my.cnf durability/RPO settings for continuous
@@ -342,6 +353,16 @@ func (r *ClusterReconciler) ensurePod(ctx context.Context, cluster *mysqlv1alpha
 	if pod.DeletionTimestamp != nil {
 		return nil
 	}
+	// The routable label is owned by the fencing reconcile, not the pod template;
+	// preserve the live value so this pass does not silently un-fence a Pod.
+	if v, ok := pod.Labels[routableLabel]; ok {
+		labels[routableLabel] = v
+	}
+	// The fencing annotation is user-owned. Preserve it so ensurePod does not
+	// erase the signal before observe/reconcileFencing can act on it.
+	if v, ok := pod.Annotations[fencingAnnotation]; ok {
+		annotations[fencingAnnotation] = v
+	}
 	if pod.Annotations[podTemplateHashAnnotation] != annotations[podTemplateHashAnnotation] {
 		return r.Delete(ctx, pod)
 	}
@@ -447,6 +468,9 @@ func labelsFor(cluster *mysqlv1alpha1.Cluster, instanceName, role string) map[st
 	if instanceName != "" {
 		labels[instanceLabel] = instanceName
 		labels[roleLabel] = role
+		// Routable by default; fencing flips this to "false" to drop the Pod from
+		// the routing Services. The live value is preserved across pod reconciles.
+		labels[routableLabel] = routableTrue
 	}
 	return labels
 }

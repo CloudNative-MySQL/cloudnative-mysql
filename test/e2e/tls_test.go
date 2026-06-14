@@ -46,7 +46,7 @@ var _ = Describe("TLS Certificate Renewal", Ordered, func() {
 		primary := clusterPrimary(cluster)
 
 		By("verifying writes succeed on the primary")
-		_, err := mysqlExec(primary, "root", rootPass, "",
+		_, err := mysqlExec(primary, "root", rootPass, "app",
 			"CREATE TABLE IF NOT EXISTS e2e_tls (id INT PRIMARY KEY); "+
 				"REPLACE INTO e2e_tls VALUES (1);")
 		Expect(err).NotTo(HaveOccurred(), "Failed to write on primary")
@@ -62,12 +62,13 @@ var _ = Describe("TLS Certificate Renewal", Ordered, func() {
 		primary := clusterPrimary(cluster)
 
 		By("sending SIGHUP to the instance manager PID1")
-		_, err := kubectl("exec", primary, "-n", testNamespace, "-c", "manager", "--", "kill", "-HUP", "1")
+		_, err := kubectl("exec", primary, "-n", testNamespace, "-c", "mysql", "--",
+			"/usr/local/bin/manager", "instance", "signal", "--pid=1", "--signal=HUP")
 		Expect(err).NotTo(HaveOccurred(), "Failed to send SIGHUP to instance manager")
 
 		By("verifying the instance manager logged the reload")
 		Eventually(func(g Gomega) {
-			logs, err := kubectl("logs", primary, "-n", testNamespace, "-c", "manager")
+			logs, err := kubectl("logs", primary, "-n", testNamespace, "-c", "mysql")
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(logs).To(ContainSubstring("TLS certificates reloaded"))
 		}, 30*time.Second, 2*time.Second).Should(Succeed())
@@ -80,7 +81,7 @@ var _ = Describe("TLS Certificate Renewal", Ordered, func() {
 		}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 		By("verifying writes still succeed after SIGHUP reload")
-		_, err = mysqlExec(primary, "root", rootPass, "",
+		_, err = mysqlExec(primary, "root", rootPass, "app",
 			"REPLACE INTO e2e_tls VALUES (2);")
 		Expect(err).NotTo(HaveOccurred(), "Failed to write after SIGHUP reload")
 	})
@@ -115,7 +116,7 @@ var _ = Describe("TLS Certificate Renewal", Ordered, func() {
 
 		By("waiting for the instance manager to detect and reload the renewed certificate")
 		Eventually(func(g Gomega) {
-			logs, err := kubectl("logs", primary, "-n", testNamespace, "-c", "manager")
+			logs, err := kubectl("logs", primary, "-n", testNamespace, "-c", "mysql")
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(logs).To(ContainSubstring("Certificate files changed, reloading"))
 		}, 2*time.Minute, 5*time.Second).Should(Succeed())
@@ -131,7 +132,7 @@ var _ = Describe("TLS Certificate Renewal", Ordered, func() {
 		}, 2*time.Minute, 10*time.Second).Should(Succeed())
 
 		By("verifying writes still succeed after certificate re-issuance and reload")
-		_, err = mysqlExec(primary, "root", rootPass, "",
+		_, err = mysqlExec(primary, "root", rootPass, "app",
 			"REPLACE INTO e2e_tls VALUES (3);")
 		Expect(err).NotTo(HaveOccurred(), "Failed to write after certificate renewal")
 

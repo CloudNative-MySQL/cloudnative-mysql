@@ -245,6 +245,28 @@ func TestDivergedInstanceStaysReadOnly(t *testing.T) {
 	}
 }
 
+func TestFencedInstanceStaysReadOnlyAndDoesNotPromote(t *testing.T) {
+	t.Parallel()
+	// Even though demo-1 is the target primary, being fenced keeps it read-only:
+	// it must not promote, and a fenced primary is demoted to stop writes (which
+	// also stands the continuous archiver down).
+	local := &fakeLocal{status: &webserver.Status{Role: webserver.RolePrimary}}
+	r := newReconciler(t, "demo-1", &mysqlv1alpha1.ClusterStatus{
+		TargetPrimary:   "demo-1",
+		FencedInstances: []string{"demo-1"},
+	}, local)
+	reconcile(t, r)
+	if local.promoted {
+		t.Fatal("a fenced instance must never promote")
+	}
+	if !local.demoted {
+		t.Fatal("a fenced primary should be demoted to stop writes")
+	}
+	if local.configured != nil {
+		t.Fatal("a fenced instance must not configure replication")
+	}
+}
+
 func TestOldPrimaryAwaitingPromotionDemotesAndWaits(t *testing.T) {
 	t.Parallel()
 	local := &fakeLocal{status: &webserver.Status{Role: webserver.RolePrimary}}

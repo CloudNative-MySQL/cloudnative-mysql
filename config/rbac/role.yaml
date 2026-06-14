@@ -91,7 +91,6 @@ rules:
   - mysql.cloudnative-mysql.io
   resources:
   - clusterimagecatalogs
-  - clusters
   - imagecatalogs
   verbs:
   - get
@@ -100,13 +99,7 @@ rules:
 - apiGroups:
   - mysql.cloudnative-mysql.io
   resources:
-  - clusters/finalizers
-  - databases/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - mysql.cloudnative-mysql.io
-  resources:
+  - clusters
   - databases
   - scheduledbackups
   verbs:
@@ -115,6 +108,13 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - mysql.cloudnative-mysql.io
+  resources:
+  - clusters/finalizers
+  - databases/finalizers
+  verbs:
+  - update
 - apiGroups:
   - policy
   resources:

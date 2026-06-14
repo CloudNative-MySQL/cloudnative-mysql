@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	mysqlv1alpha1 "github.com/yyewolf/cnmysql/api/v1alpha1"
@@ -128,5 +129,31 @@ func TestReconcileSemiSyncNoopWhenDisabledOrUnreachable(t *testing.T) {
 	}
 	if len(control.semiSyncWaits) != 0 {
 		t.Fatalf("wait calls = %v, want none when primary unreachable", control.semiSyncWaits)
+	}
+}
+
+func TestRenderMyCnfUsesBootstrapSafeSemiSyncWaitCountForPreferredDurability(t *testing.T) {
+	t.Parallel()
+
+	cluster := semiSyncCluster(2, mysqlv1alpha1.DataDurabilityPreferred)
+	out, err := renderMyCnf(cluster, testPlan(), instancePlan{ServerID: 1, IsPrimary: true, ServiceName: "demo-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "rpl_semi_sync_source_wait_for_replica_count = 1") {
+		t.Fatalf("rendered my.cnf should start preferred semi-sync at one ack:\n%s", out)
+	}
+}
+
+func TestRenderMyCnfKeepsConfiguredSemiSyncWaitCountForRequiredDurability(t *testing.T) {
+	t.Parallel()
+
+	cluster := semiSyncCluster(2, mysqlv1alpha1.DataDurabilityRequired)
+	out, err := renderMyCnf(cluster, testPlan(), instancePlan{ServerID: 1, IsPrimary: true, ServiceName: "demo-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "rpl_semi_sync_source_wait_for_replica_count = 2") {
+		t.Fatalf("rendered my.cnf should keep required semi-sync at minSyncReplicas:\n%s", out)
 	}
 }

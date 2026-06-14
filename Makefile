@@ -96,10 +96,18 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 
 GINKGO_VERSION ?= v2.27.2
 GINKGO_PROCS ?= 1
+ifeq ($(firstword $(MAKECMDGOALS)),test-e2e)
+E2E_EXTRA_GOALS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+E2E_FOCUS ?= $(strip $(E2E_EXTRA_GOALS))
+.PHONY: $(E2E_EXTRA_GOALS)
+$(E2E_EXTRA_GOALS):
+	@:
+endif
+E2E_FOCUS_ARG = $(if $(E2E_FOCUS),--focus='$(E2E_FOCUS)',)
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ginkgo ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) $(GINKGO) -procs=$(GINKGO_PROCS) -v -tags=e2e --timeout=120m ./test/e2e/
+test-e2e: setup-test-e2e manifests generate fmt vet ginkgo ## Run the e2e tests. Optional: make test-e2e FocusRegex or E2E_FOCUS=FocusRegex.
+	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) $(GINKGO) -procs=$(GINKGO_PROCS) -v -tags=e2e $(E2E_FOCUS_ARG) --timeout=120m ./test/e2e/
 	$(MAKE) cleanup-test-e2e
 
 .PHONY: cleanup-test-e2e

@@ -867,6 +867,14 @@ type ClusterStatus struct {
 	// +optional
 	DivergedInstances []string `json:"divergedInstances,omitempty"`
 
+	// FencedInstances are instances the operator has fenced because their Pod
+	// carries the fencing annotation. A fenced instance is pulled out of the
+	// routing Services, kept read-only by its in-Pod reconciler (so it stops
+	// archiving and refuses writes), and is excluded as a failover candidate.
+	// Clearing the annotation removes it from this list and restores it.
+	// +optional
+	FencedInstances []string `json:"fencedInstances,omitempty"`
+
 	// PrimaryFailingSince records when the current primary first became
 	// unreachable. It is used to enforce spec.failoverDelay before an automatic
 	// failover, and is cleared once the primary is healthy again.

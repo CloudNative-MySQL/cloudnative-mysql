@@ -25,6 +25,7 @@ import (
 	"github.com/yyewolf/cnmysql/internal/cmd/manager/instance/join"
 	"github.com/yyewolf/cnmysql/internal/cmd/manager/instance/restore"
 	"github.com/yyewolf/cnmysql/internal/cmd/manager/instance/run"
+	"github.com/yyewolf/cnmysql/internal/cmd/manager/instance/signal"
 	"github.com/yyewolf/cnmysql/internal/cmd/manager/instance/status"
 )
 
@@ -42,6 +43,7 @@ func NewCommand() *cobra.Command {
 		join.NewCommand(),
 		restore.NewCommand(),
 		status.NewCommand(),
+		signal.NewCommand(),
 	)
 
 	return cmd

@@ -3696,6 +3696,16 @@ spec:
                 items:
                   type: string
                 type: array
+              fencedInstances:
+                description: |-
+                  FencedInstances are instances the operator has fenced because their Pod
+                  carries the fencing annotation. A fenced instance is pulled out of the
+                  routing Services, kept read-only by its in-Pod reconciler (so it stops
+                  archiving and refuses writes), and is excluded as a failover candidate.
+                  Clearing the annotation removes it from this list and restores it.
+                items:
+                  type: string
+                type: array
               gtidExecutedByInstance:
                 additionalProperties:
                   type: string

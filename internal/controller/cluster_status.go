@@ -54,6 +54,10 @@ type observedCluster struct {
 	// contained in the primary's (errant transactions). They cannot safely rejoin
 	// without losing data, so they are surfaced rather than silently re-cloned.
 	DivergedInstances []string
+	// FencedInstances are instances whose Pod carries the fencing annotation.
+	// They are excluded from routing and from failover candidacy and are kept
+	// read-only by their in-Pod reconciler.
+	FencedInstances []string
 	// ContinuousArchiving holds the primary's archiving frontier/health when
 	// continuous archiving is enabled; nil otherwise.
 	ContinuousArchiving *mysqlv1alpha1.ContinuousArchivingStatus
@@ -81,6 +85,9 @@ func (r *ClusterReconciler) observe(ctx context.Context, cluster *mysqlv1alpha1.
 				continue
 			}
 			return observedCluster{}, err
+		}
+		if isPodFenced(pod) {
+			observed.FencedInstances = append(observed.FencedInstances, inst.Name)
 		}
 		if !podReady(pod) {
 			continue
@@ -223,6 +230,7 @@ func (r *ClusterReconciler) patchStatus(ctx context.Context, cluster *mysqlv1alp
 	latest.Status.PhaseReason = observed.PhaseReason
 	latest.Status.ReadyInstances = observed.ReadyInstances
 	latest.Status.DivergedInstances = observed.DivergedInstances
+	latest.Status.FencedInstances = observed.FencedInstances
 	if len(observed.GTIDByInstance) > 0 {
 		latest.Status.GTIDExecutedByInstance = observed.GTIDByInstance
 	}

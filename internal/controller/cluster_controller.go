@@ -44,9 +44,29 @@ const (
 	podMonitorClusterLabel = "cnmysql.io/cluster"
 	instanceLabel          = "mysql.cloudnative-mysql.io/instance"
 	roleLabel              = "mysql.cloudnative-mysql.io/role"
+	// routableLabel gates membership of the rw/ro/r routing Services. Every
+	// instance Pod carries it set to "true"; fencing flips it to "false" so the
+	// fenced Pod is dropped from all routing Services (Service selectors are
+	// equality-only, so a positive gate is the way to exclude a member).
+	routableLabel = "mysql.cloudnative-mysql.io/routable"
 
 	rolePrimary = "primary"
 	roleReplica = "replica"
+
+	routableTrue  = "true"
+	routableFalse = "false"
+
+	// fencingAnnotation, when set to "true" on an instance Pod, fences that
+	// instance: it is removed from routing, kept read-only, and not eligible as a
+	// failover candidate. Clearing it restores the instance.
+	fencingAnnotation = "cnmysql.cloudnative-mysql.io/fencing"
+	// skipDeleteGuardAnnotation, when "true" on the Cluster, bypasses the deletion
+	// guard so the Cluster (and its instances) can be torn down.
+	skipDeleteGuardAnnotation = "cnmysql.cloudnative-mysql.io/skipDeleteGuard"
+	// clusterFinalizer holds Cluster deletion until the guard releases it, so an
+	// accidental `kubectl delete cluster` does not immediately destroy running
+	// instances and their data.
+	clusterFinalizer = "cnmysql.cloudnative-mysql.io/delete-guard"
 
 	configMapAnnotation       = "cnmysql.cloudnative-mysql.io/config-map"
 	configHashAnnotation      = "cnmysql.cloudnative-mysql.io/config-hash"
@@ -115,7 +135,7 @@ type ClusterReconciler struct {
 	podMonitorAvailable bool
 }
 
-// +kubebuilder:rbac:groups=mysql.cloudnative-mysql.io,resources=clusters,verbs=get;list;watch
+// +kubebuilder:rbac:groups=mysql.cloudnative-mysql.io,resources=clusters,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=mysql.cloudnative-mysql.io,resources=clusters/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=mysql.cloudnative-mysql.io,resources=clusters/finalizers,verbs=update
 // +kubebuilder:rbac:groups=mysql.cloudnative-mysql.io,resources=imagecatalogs,verbs=get;list;watch
@@ -140,6 +160,17 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	cluster.SetDefaults()
+
+	// The deletion guard runs first: it holds a finalizer so an accidental delete
+	// leaves instances intact, and it takes over the reconcile while the Cluster
+	// is being deleted.
+	deleting, guardResult, err := r.reconcileDeletionGuard(ctx, cluster)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if deleting {
+		return guardResult, nil
+	}
 
 	if reason := unsupportedReason(cluster); reason != "" {
 		log.Info("Cluster shape is not supported by M3", "reason", reason)
@@ -303,6 +334,11 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// Keep rw/ro/r routing in step with the current primary (set by whichever
 	// instance promoted itself).
 	if err := r.reconcileRoleLabels(ctx, cluster, observed); err != nil {
+		return ctrl.Result{}, err
+	}
+	// Pull fenced instances out of routing (routable=false) and restore unfenced
+	// ones, keeping the routing Services in step with the fencing annotations.
+	if err := r.reconcileFencing(ctx, cluster, observed); err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := r.patchStatus(ctx, cluster, observed); err != nil {
