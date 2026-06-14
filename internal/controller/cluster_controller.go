@@ -128,6 +128,9 @@ type ClusterReconciler struct {
 	Scheme        *runtime.Scheme
 	Recorder      record.EventRecorder
 	ControlClient InstanceControlClient
+	// APIReader bypasses the controller-runtime cache for narrow reads that
+	// should not start informers, such as checking namespace deletion state.
+	APIReader client.Reader
 	// podMonitorAvailable records whether the Prometheus Operator PodMonitor CRD
 	// is installed. PodMonitor support is fully opt-in: when the CRD is absent we
 	// neither watch nor reconcile PodMonitors, so the operator runs without the

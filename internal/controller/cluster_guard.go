@@ -258,8 +258,12 @@ func (r *ClusterReconciler) reconcileDeletionGuard(ctx context.Context, cluster 
 }
 
 func (r *ClusterReconciler) namespaceDeleting(ctx context.Context, name string) (bool, error) {
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
 	ns := &corev1.Namespace{}
-	if err := r.Get(ctx, types.NamespacedName{Name: name}, ns); err != nil {
+	if err := reader.Get(ctx, types.NamespacedName{Name: name}, ns); err != nil {
 		if apierrors.IsNotFound(err) {
 			return false, nil
 		}

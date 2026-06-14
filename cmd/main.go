@@ -165,8 +165,9 @@ func main() {
 	}
 
 	if err := (&controller.ClusterReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		APIReader: mgr.GetAPIReader(),
 		//nolint:staticcheck // ClusterReconciler uses the typed EventRecorder interface.
 		Recorder: mgr.GetEventRecorderFor("cluster-controller"),
 	}).SetupWithManager(mgr); err != nil {
