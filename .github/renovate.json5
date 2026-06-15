@@ -19,7 +19,7 @@
   // This custom manager only handles single-version pins annotated in workflows,
   // e.g. the kind *binary*:
   //   # renovate: datasource=github-releases depName=kubernetes-sigs/kind
-  //   KIND_VERSION: v0.30.0
+  //   KIND_VERSION: v0.32.0
   customManagers: [
     {
       customType: 'regex',

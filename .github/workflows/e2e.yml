@@ -16,7 +16,11 @@ concurrency:
 
 env:
   # renovate: datasource=github-releases depName=kubernetes-sigs/kind
-  KIND_VERSION: v0.30.0
+  # Must be >= the kind release that builds the kindest/node images in
+  # .github/kind_versions.json. v1.36.x node images use containerd config v4,
+  # which only kind v0.32.0+ can read (older kind fails `kind load` with
+  # "unknown containerd config version: 4"). Keep in sync with k8s_versions_scope.json.
+  KIND_VERSION: v0.32.0
 
 jobs:
   generate-jobs:
