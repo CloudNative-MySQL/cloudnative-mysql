@@ -108,4 +108,4 @@ Run `make help` for the full list. `AGENTS.md` documents the layout and the proj
 
 ## License
 
-Apache License 2.0.
+GNU General Public License v3.0. See [LICENSE](LICENSE).

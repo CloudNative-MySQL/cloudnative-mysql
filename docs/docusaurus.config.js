@@ -91,7 +91,7 @@ const config = {
             ],
           },
         ],
-        copyright: `Copyright © ${new Date().getFullYear()} The cloudnative-mysql Authors.`,
+        copyright: `Copyright © ${new Date().getFullYear()} The CloudNative M,ySQL Authors.`,
       },
       prism: {
         theme: lightCodeTheme,
