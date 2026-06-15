@@ -40,7 +40,7 @@ metadata:
   name: cluster-sample
 spec:
   instances: 3
-  imageName: cloudnative-mysql-instance:8.4
+  imageName: ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.4
   storage:
     size: 10Gi
   mysql:
@@ -128,7 +128,7 @@ Use either `imageName` or `imageCatalogRef`.
 
 ```yaml
 spec:
-  imageName: cloudnative-mysql-instance:8.4
+  imageName: ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.4
 ```
 
 ```yaml
@@ -687,9 +687,9 @@ metadata:
 spec:
   images:
     - major: 8
-      image: registry.example.com/cloudnative-mysql-instance:8.4
+      image: ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.4
     - major: 9
-      image: registry.example.com/cloudnative-mysql-instance:9.x
+      image: ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:9.x
 ```
 
 ### Fields
@@ -723,9 +723,9 @@ metadata:
 spec:
   images:
     - major: 8
-      image: registry.example.com/cloudnative-mysql-instance:8.4
+      image: ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.4
     - major: 9
-      image: registry.example.com/cloudnative-mysql-instance:9.x
+      image: ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:9.x
 ```
 
 Reference it from a Cluster:

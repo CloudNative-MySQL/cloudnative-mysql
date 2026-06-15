@@ -161,7 +161,7 @@ metadata:
   name: restored-cluster
 spec:
   instances: 3
-  imageName: cloudnative-mysql-instance:8.4
+  imageName: ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.4
   storage:
     size: 10Gi
   bootstrap:
@@ -211,7 +211,7 @@ metadata:
   name: recovered-cluster
 spec:
   instances: 3
-  imageName: cloudnative-mysql-instance:8.4
+  imageName: ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.4
   storage:
     size: 10Gi
   bootstrap:

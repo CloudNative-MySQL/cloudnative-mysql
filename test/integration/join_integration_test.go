@@ -37,7 +37,7 @@ import (
 // present on the replica, and a subsequent write on the source propagates. It
 // runs across every supported MySQL flavor.
 func TestJoinProvisionsReplica(t *testing.T) {
-	for _, f := range flavors {
+	for _, f := range selectedFlavors(t) {
 		t.Run(f.name, func(t *testing.T) {
 			t.Parallel()
 			runJoinTest(t, f)
@@ -79,7 +79,7 @@ exec /usr/sbin/mysqld --datadir=$REP --socket=/tmp/rep.sock --port=3307 --server
 `, appPass, f.gtidArgs(t), appUser, f.version, f.version)
 
 	req := testcontainers.ContainerRequest{
-		Image:        ensureInstanceImage(t, f),
+		Image:        instanceImage(f),
 		ExposedPorts: []string{"3306/tcp", "3307/tcp"},
 		Entrypoint:   []string{"bash", "-lc"},
 		Cmd:          []string{script},

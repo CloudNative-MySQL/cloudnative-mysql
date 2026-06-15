@@ -80,7 +80,7 @@ func doSuiteSetup() {
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")
 
 	for _, version := range neededInstanceVersions() {
-		buildAndLoadInstanceImage(version)
+		pullAndLoadInstanceImage(version)
 	}
 
 	configureKubectlKubeRC()
@@ -88,18 +88,21 @@ func doSuiteSetup() {
 	deployOperator()
 }
 
-// buildAndLoadInstanceImage builds this version's slim instance image and loads
-// it into the Kind cluster, so a Cluster pinned to cloudnative-mysql-instance:<version>
-// boots without pulling from a registry.
-func buildAndLoadInstanceImage(version string) {
-	By(fmt.Sprintf("building the instance image (%s)", version))
-	cmd := exec.Command("make", "docker-build-instance", "INSTANCE_VERSION="+version)
-	_, err := utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the instance image for %s", version)
+// pullAndLoadInstanceImage pulls this version's published slim instance image
+// (built and pushed from the separate containers repo) and loads it into the
+// Kind cluster, so a Cluster pinned to that image boots without each Pod pulling
+// from the registry.
+func pullAndLoadInstanceImage(version string) {
+	image := instanceImageFor(version)
 
-	By(fmt.Sprintf("loading the instance image on Kind (%s)", version))
-	err = utils.LoadImageToKindClusterWithName(instanceImageFor(version))
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the instance image for %s into Kind", version)
+	By(fmt.Sprintf("pulling the instance image (%s)", image))
+	cmd := exec.Command("docker", "pull", image)
+	_, err := utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to pull the instance image %s", image)
+
+	By(fmt.Sprintf("loading the instance image on Kind (%s)", image))
+	err = utils.LoadImageToKindClusterWithName(image)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the instance image %s into Kind", image)
 }
 
 // neededInstanceVersions is the deduplicated set of instance versions the suite

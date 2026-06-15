@@ -37,7 +37,7 @@ import (
 // reaches mysqld over the admin interface where available (8.0.14+) and over
 // the socket otherwise.
 func TestRunServesControlAPI(t *testing.T) {
-	for _, f := range flavors {
+	for _, f := range selectedFlavors(t) {
 		t.Run(f.name, func(t *testing.T) {
 			t.Parallel()
 			runRunTest(t, f)
@@ -61,7 +61,7 @@ exec manager instance run --mysqld=/usr/sbin/mysqld --config=/tmp/my.cnf \
 `, f.myCnf(t, 1), f.version, f.version)
 
 	req := testcontainers.ContainerRequest{
-		Image:        ensureInstanceImage(t, f),
+		Image:        instanceImage(f),
 		ExposedPorts: []string{"8080/tcp"},
 		Entrypoint:   []string{"bash", "-lc"},
 		Cmd:          []string{script},

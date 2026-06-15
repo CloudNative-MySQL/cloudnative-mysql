@@ -36,7 +36,7 @@ import (
 // a fresh data directory and create the application account, then starts mysqld
 // and verifies the account works. It runs across every supported MySQL flavor.
 func TestInitdbBootstrapsWorkingServer(t *testing.T) {
-	for _, f := range flavors {
+	for _, f := range selectedFlavors(t) {
 		t.Run(f.name, func(t *testing.T) {
 			t.Parallel()
 			runInitdbTest(t, f)
@@ -62,7 +62,7 @@ exec /usr/sbin/mysqld --datadir=/var/lib/mysql --socket=/var/run/mysqld/mysqld.s
 `, appPass, appDB, appUser, f.version)
 
 	req := testcontainers.ContainerRequest{
-		Image:        ensureInstanceImage(t, f),
+		Image:        instanceImage(f),
 		ExposedPorts: []string{"3306/tcp"},
 		Env:          map[string]string{"MYSQL_ROOT_PASSWORD": rootPassword, "MYSQL_APP_PASSWORD": appPass},
 		Entrypoint:   []string{"bash", "-lc"},

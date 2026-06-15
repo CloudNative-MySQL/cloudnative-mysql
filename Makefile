@@ -198,20 +198,9 @@ docker-build: ## Build docker image with the manager.
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
 
-# Slim instance images (our own Percona Server build; see ../containers/).
-# INSTANCE_VERSION selects one version; empty builds all.
-# PATCH_VERSION forces a specific patch number; empty auto-detects from registry.
-.PHONY: docker-build-instance
-docker-build-instance: ## Build the slim instance image(s). INSTANCE_VERSION=8.0 for one; empty for all.
-	CONTAINER_TOOL=$(CONTAINER_TOOL) REGISTRY=$(INSTANCE_REGISTRY) PATCH_VERSION=$(PATCH_VERSION) ../containers/images/build.sh $(INSTANCE_VERSION)
-
-.PHONY: docker-push-instance
-docker-push-instance: ## Build and push the slim instance image(s).
-	CONTAINER_TOOL=$(CONTAINER_TOOL) REGISTRY=$(INSTANCE_REGISTRY) PATCH_VERSION=$(PATCH_VERSION) PUSH=1 ../containers/images/build.sh $(INSTANCE_VERSION)
-
-INSTANCE_REGISTRY ?= cloudnative-mysql-instance
-INSTANCE_VERSION ?=
-PATCH_VERSION ?=
+# The slim instance images are built and published from the separate containers
+# repo (ghcr.io/cloudnative-mysql/cloudnative-mysql-instance). The operator and
+# e2e suite consume those published images; they are no longer built here.
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:

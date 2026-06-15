@@ -53,11 +53,22 @@ func sampleVersion() string {
 	return "8.4"
 }
 
-// instanceImageFor returns the locally-built slim instance image tag for a
-// version. It mirrors images/build.sh's default REGISTRY (cloudnative-mysql-instance).
+// instanceImageFor returns the published slim instance image reference for a
+// version. The images are built and pushed from the separate containers repo;
+// the suite pulls them and loads them into Kind (see pullAndLoadInstanceImage).
 func instanceImageFor(version string) string {
-	return "cloudnative-mysql-instance:" + version
+	return instanceImageRepo + ":" + version
 }
+
+// instanceImageRepo is the GHCR repository the containers repo publishes the
+// slim instance images to. Override with E2E_INSTANCE_IMAGE_REPO to test against
+// a fork or a private mirror.
+var instanceImageRepo = func() string {
+	if v := strings.TrimSpace(os.Getenv("E2E_INSTANCE_IMAGE_REPO")); v != "" {
+		return v
+	}
+	return "ghcr.io/cloudnative-mysql/cloudnative-mysql-instance"
+}()
 
 // setupMC deploys a long-lived mc (MinIO client) toolbox Pod with the bucket
 // credentials pre-wired through MC_HOST_local, so the archiving specs can read

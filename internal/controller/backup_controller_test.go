@@ -40,7 +40,7 @@ const demoPrimaryInstance = "demo-1"
 func baseBackupCluster() *mysqlv1alpha1.Cluster {
 	cluster := baseCluster()
 	cluster.Status.CurrentPrimary = demoPrimaryInstance
-	cluster.Status.Image = "cloudnative-mysql-instance:8.4"
+	cluster.Status.Image = "ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.4"
 	cluster.Spec.Backup = &mysqlv1alpha1.BackupConfiguration{
 		ObjectStore: &mysqlv1alpha1.S3ObjectStore{
 			Bucket: "cluster-backups",
@@ -114,7 +114,7 @@ func TestBackupReconcileCreatesWorkerJobFromClusterObjectStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	container := job.Spec.Template.Spec.Containers[0]
-	if container.Image != "cloudnative-mysql-instance:8.4" {
+	if container.Image != "ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.4" {
 		t.Fatalf("worker image = %q", container.Image)
 	}
 	args := strings.Join(container.Args, " ")

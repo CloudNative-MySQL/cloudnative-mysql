@@ -39,7 +39,9 @@ import (
 )
 
 const (
-	defaultInstanceImage = "cloudnative-mysql-instance:8.0"
+	// defaultInstanceImage is the published slim instance image, built and pushed
+	// from the separate containers repo to GHCR. See docs/src/instance-images.md.
+	defaultInstanceImage = "ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.0"
 
 	clusterLabel           = "mysql.cloudnative-mysql.io/cluster"
 	podMonitorClusterLabel = "cloudnative-mysql.io/cluster"

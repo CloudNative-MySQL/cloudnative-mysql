@@ -291,10 +291,10 @@ func TestBuildPlanResolvesNamespacedImageCatalog(t *testing.T) {
 func TestResolveServerVersionFromImageTag(t *testing.T) {
 	t.Parallel()
 	tests := map[string]string{
-		"cloudnative-mysql-instance:8.0":       defaultMySQL80ServerVersion,
-		"cloudnative-mysql-instance:8.4":       defaultMySQL84ServerVersion,
-		"cloudnative-mysql-instance:9.x":       defaultMySQL9xServerVersion,
-		"registry/cloudnative-mysql:8.0.46-37": "8.0.46-37",
+		"ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.0": defaultMySQL80ServerVersion,
+		"ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.4": defaultMySQL84ServerVersion,
+		"ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:9.x": defaultMySQL9xServerVersion,
+		"registry/cloudnative-mysql:8.0.46-37":                     "8.0.46-37",
 	}
 
 	for image, want := range tests {
@@ -310,7 +310,7 @@ func TestResolveServerVersionFromImageTag(t *testing.T) {
 
 func TestResolveServerVersionRejectsMySQL56(t *testing.T) {
 	t.Parallel()
-	if _, err := resolveServerVersion("cloudnative-mysql-instance:5.6"); err == nil {
+	if _, err := resolveServerVersion("ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:5.6"); err == nil {
 		t.Fatal("expected MySQL 5.6 image tag to be unsupported")
 	}
 }
@@ -839,7 +839,7 @@ func drainEvents(events <-chan string, phase string) bool {
 
 func testPlan() clusterPlan {
 	return clusterPlan{
-		Image:              "cloudnative-mysql-instance:8.0",
+		Image:              "ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.0",
 		ServerVersion:      "8.0.46",
 		Instances:          1,
 		RootSecretName:     "demo-root",

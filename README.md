@@ -28,13 +28,15 @@ The steps below bring up the operator and a three-instance cluster in a local Ki
 
 You will need `go`, `docker`, `kubectl`, `kind`, `make`, and `cert-manager` installed in the target cluster. cert-manager issues the certificates used for instance mTLS and MySQL TLS.
 
-Build the operator and instance images, then load them into Kind:
+Build the operator image and pull the published instance image (built from the
+separate [`containers`](https://github.com/CloudNative-MySQL/containers) repo),
+then load both into Kind:
 
 ```bash
 make docker-build IMG=cloudnative-mysql-controller:dev
-make docker-build-instance INSTANCE_VERSION=8.4
+docker pull ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.4
 kind load docker-image cloudnative-mysql-controller:dev --name cloudnative-mysql-test-e2e
-kind load docker-image cloudnative-mysql-instance:8.4 --name cloudnative-mysql-test-e2e
+kind load docker-image ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.4 --name cloudnative-mysql-test-e2e
 ```
 
 Install the CRDs and deploy the controller:
@@ -54,7 +56,7 @@ metadata:
   name: cluster-sample
 spec:
   instances: 3
-  imageName: cloudnative-mysql-instance:8.4
+  imageName: ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.4
   storage:
     size: 10Gi
   mysql:

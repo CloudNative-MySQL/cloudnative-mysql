@@ -24,30 +24,26 @@ The current version matrix is:
 | 8.4 | `debian:bookworm-slim` | `ps-84-lts` | `pxb-84-lts` | LTS line. |
 | 9.x | `debian:bookworm-slim` | `ps-9x-innovation` | `pxb-9x-innovation` | Currently built from Percona testing packages. |
 
-The source of truth for build arguments is `images/versions.json`.
+## Where the images come from
 
-## Build commands
+The instance images are built and published from the separate
+[`containers`](https://github.com/CloudNative-MySQL/containers) repo, not from
+this operator repo. That repo holds the `Dockerfile.instance`, the build matrix
+(`images/versions.json`), and the build script, and a GitHub Actions workflow
+publishes the images to GHCR:
 
-Build one major:
-
-```bash
-make docker-build-instance INSTANCE_VERSION=8.4
+```text
+ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:<major>
 ```
 
-Build every configured major:
+Each major is published under a moving tag (`8.0`, `8.4`, `9.x`) that points to
+the latest patch build, plus immutable `<major>-<patch>` tags (e.g. `8.4-3`).
+Non-release builds off `main` are tagged `<major>-<commit-sha>`. Use a moving
+tag for convenience or an immutable patch tag to pin exactly.
 
-```bash
-make docker-build-instance
-```
-
-Push images:
-
-```bash
-make docker-push-instance INSTANCE_REGISTRY=registry.example.com/cloudnative-mysql-instance
-```
-
-The generated tags are intended to be selected directly in `Cluster.spec.imageName`
-or through an `ImageCatalog`.
+These tags are selected directly in `Cluster.spec.imageName` or through an
+`ImageCatalog`. If you need to build the images yourself (a fork, a private
+mirror, or a new major), see the build instructions in the `containers` repo.
 
 ## Cluster image selection
 
@@ -55,7 +51,7 @@ Direct image selection:
 
 ```yaml
 spec:
-  imageName: cloudnative-mysql-instance:8.4
+  imageName: ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.4
 ```
 
 Catalog-based selection:
@@ -68,7 +64,7 @@ metadata:
 spec:
   images:
     - major: 8
-      image: cloudnative-mysql-instance:8.4
+      image: ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.4
 ---
 apiVersion: mysql.cloudnative-mysql.io/v1alpha1
 kind: Cluster

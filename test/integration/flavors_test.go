@@ -21,33 +21,23 @@ package integration
 
 import (
 	"fmt"
-	"os/exec"
-	"path/filepath"
-	"sync"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/version"
 )
 
-// flavor describes a supported MySQL/Percona version under test. Each one builds
-// our own slim instance image (Dockerfile.instance) from a Debian base plus the
-// version's Percona APT repositories — we no longer consume the upstream
-// percona/percona-server image. The build args mirror images/versions.json.
+// flavor describes a supported MySQL/Percona version under test. The integration
+// suite consumes the published slim instance images (built and pushed from the
+// separate containers repo) rather than building them here; testcontainers pulls
+// the image on demand. The version matrix mirrors the containers repo's
+// images/versions.json — keep the two in sync.
 type flavor struct {
-	// name is the subtest name.
+	// name is the subtest name and the image tag (the major key, e.g. "8.0").
 	name string
-	// base is the Debian base image used for this flavor.
-	base string
-	// ps and pxb are the percona-release repository keywords for the server and
-	// XtraBackup; pxbPackage is the XtraBackup package to install.
-	ps         string
-	pxb        string
-	pxbPackage string
-	// component is the percona-release repository component ("release" for GA,
-	// "testing" for versions Percona only ships pre-GA, e.g. 9.x).
-	component string
 	// version is passed to the manager as --server-version and must match the
-	// server actually installed by the image.
+	// major.minor of the server installed in the image.
 	version string
 	// hasAdminInterface is true for servers with the administrative interface
 	// (8.0.14+); older servers reach the control connection over the socket.
@@ -57,90 +47,61 @@ type flavor struct {
 	joinSupported bool
 }
 
-// flavors is the matrix of MySQL versions the operator targets. It mirrors
-// images/versions.json; keep the two in sync.
+// flavors is the matrix of MySQL versions the operator targets. It mirrors the
+// containers repo's images/versions.json; keep the two in sync.
 var flavors = []flavor{
 	{
 		name:              "8.0",
-		base:              "debian:bookworm-slim",
-		ps:                "ps-80",
-		pxb:               "pxb-80",
-		pxbPackage:        "percona-xtrabackup-80",
-		component:         "release",
 		version:           "8.0.46",
 		hasAdminInterface: true,
 		joinSupported:     true,
 	},
 	{
 		name:              "8.4",
-		base:              "debian:bookworm-slim",
-		ps:                "ps-84-lts",
-		pxb:               "pxb-84-lts",
-		pxbPackage:        "percona-xtrabackup-84",
-		component:         "release",
 		version:           "8.4.0",
 		hasAdminInterface: true,
 		joinSupported:     true,
 	},
 	{
-		name:       "9.x",
-		base:       "debian:bookworm-slim",
-		ps:         "ps-9x-innovation",
-		pxb:        "pxb-9x-innovation",
-		pxbPackage: "percona-xtrabackup-96",
-		// Percona Server 9.x is only published in the testing channel so far.
-		component:         "testing",
+		name:              "9.x",
 		version:           "9.6.0",
 		hasAdminInterface: true,
 		joinSupported:     true,
 	},
 }
 
-// buildResult memoises a single image build per flavor.
-type buildResult struct {
-	once sync.Once
-	tag  string
-	err  error
+// selectedFlavors returns the flavors to exercise. By default it is the full
+// matrix; setting E2E_MYSQL_VERSION pins a single version so a CI matrix job can
+// run one flavor per job, mirroring the e2e suite.
+func selectedFlavors(t *testing.T) []flavor {
+	t.Helper()
+	want := strings.TrimSpace(os.Getenv("E2E_MYSQL_VERSION"))
+	if want == "" {
+		return flavors
+	}
+	for _, f := range flavors {
+		if f.name == want {
+			return []flavor{f}
+		}
+	}
+	t.Fatalf("E2E_MYSQL_VERSION=%q matches no known flavor", want)
+	return nil
 }
 
-// instanceBuilds tracks the per-flavor image build so the initdb/run/join tests
-// (which run in parallel) build each flavor's image exactly once.
-var instanceBuilds sync.Map // flavor name -> *buildResult
-
-// ensureInstanceImage builds this flavor's slim instance image from the repo's
-// Dockerfile.instance (once) and returns its tag. We shell out to `docker build`
-// rather than let testcontainers build from the context: testcontainers'
-// .dockerignore handling drops Go sources our multi-stage build needs.
-func ensureInstanceImage(t *testing.T, f flavor) string {
-	t.Helper()
-	v, _ := instanceBuilds.LoadOrStore(f.name, &buildResult{})
-	br := v.(*buildResult)
-	br.once.Do(func() {
-		repoRoot, err := filepath.Abs("../..")
-		if err != nil {
-			br.err = err
-			return
-		}
-		tag := "cloudnative-mysql-instance-test:" + f.name
-		cmd := exec.Command("docker", "build",
-			"-f", "Dockerfile.instance",
-			"--build-arg", "BASE_IMAGE="+f.base,
-			"--build-arg", "PS_REPO="+f.ps,
-			"--build-arg", "PXB_REPO="+f.pxb,
-			"--build-arg", "PXB_PACKAGE="+f.pxbPackage,
-			"--build-arg", "REPO_COMPONENT="+f.component,
-			"-t", tag, repoRoot)
-		cmd.Dir = repoRoot
-		if out, err := cmd.CombinedOutput(); err != nil {
-			br.err = fmt.Errorf("building %s: %w\n%s", tag, err, out)
-			return
-		}
-		br.tag = tag
-	})
-	if br.err != nil {
-		t.Fatal(br.err)
+// instanceImageRepo is the GHCR repository the containers repo publishes the
+// slim instance images to. Override with INSTANCE_IMAGE_REPO to test against a
+// fork or a private mirror.
+func instanceImageRepo() string {
+	if v := strings.TrimSpace(os.Getenv("INSTANCE_IMAGE_REPO")); v != "" {
+		return v
 	}
-	return br.tag
+	return "ghcr.io/cloudnative-mysql/cloudnative-mysql-instance"
+}
+
+// instanceImage returns the published slim instance image reference for a
+// flavor. testcontainers pulls it on demand.
+func instanceImage(f flavor) string {
+	return instanceImageRepo() + ":" + f.name
 }
 
 // gtidArgs returns the mysqld command-line flags enabling GTID replication for

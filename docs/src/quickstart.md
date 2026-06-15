@@ -33,23 +33,18 @@ Build the operator image:
 make docker-build IMG=cloudnative-mysql-controller:dev
 ```
 
-Build one instance image:
+Pull the published instance image. These are built and published from the
+separate [`containers`](https://github.com/CloudNative-MySQL/containers) repo:
 
 ```bash
-make docker-build-instance INSTANCE_VERSION=8.4
-```
-
-By default this creates an image named like:
-
-```text
-cloudnative-mysql-instance:8.4
+docker pull ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.4
 ```
 
 For a local Kind cluster, load both images:
 
 ```bash
 kind load docker-image cloudnative-mysql-controller:dev --name cloudnative-mysql-test-e2e
-kind load docker-image cloudnative-mysql-instance:8.4 --name cloudnative-mysql-test-e2e
+kind load docker-image ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.4 --name cloudnative-mysql-test-e2e
 ```
 
 ## Deploy the operator
@@ -93,7 +88,7 @@ metadata:
   name: cluster-sample
 spec:
   instances: 3
-  imageName: cloudnative-mysql-instance:8.4
+  imageName: ghcr.io/cloudnative-mysql/cloudnative-mysql-instance:8.4
   storage:
     size: 10Gi
   mysql:
