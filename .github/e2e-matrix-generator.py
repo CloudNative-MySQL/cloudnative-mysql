@@ -7,13 +7,16 @@
 #   - mysql_version the cloudnative-mysql instance flavor (8.0 / 8.4 / 9.x) under test
 #
 # To keep the job count bounded we never run the full cartesian product. We run
-# a "cross": the two diagonal corners always, plus (on richer events) the full
-# k8s axis at the newest MySQL and the full MySQL axis at the newest k8s.
+# a "cross": the two diagonal corners, plus the full k8s axis at the newest
+# MySQL and the full MySQL axis at the newest k8s. Every triggering event runs
+# this same cross (build_push remains as the corner helper build_pull_request
+# composes on top of).
 #
 # k8s versions come from .github/kind_versions.json, filtered by the e2e_test
 # range in .github/k8s_versions_scope.json. MySQL versions are read from
-# images/versions.json — the single source of truth already used to build the
-# instance images — ordered newest-first by serverVersion.
+# .github/mysql_versions.json — kept in sync with the flavor matrix in
+# test/integration/flavors_test.go and the external containers repo that builds
+# the instance images — ordered newest-first by serverVersion.
 
 import argparse
 import json
@@ -25,7 +28,7 @@ from typing import List
 
 KIND_VERSIONS_FILE = ".github/kind_versions.json"
 VERSION_SCOPE_FILE = ".github/k8s_versions_scope.json"
-MYSQL_VERSIONS_FILE = "images/versions.json"
+MYSQL_VERSIONS_FILE = ".github/mysql_versions.json"
 
 
 class VersionList(list):
@@ -108,7 +111,7 @@ def build_pull_request():
 
 
 MODES = {
-    "push": build_push,
+    "push": build_pull_request,
     "pull_request": build_pull_request,
     "workflow_dispatch": build_pull_request,
     "main": build_pull_request,

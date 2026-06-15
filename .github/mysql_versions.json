@@ -1,0 +1,14 @@
+[
+  {
+    "version": "8.0",
+    "serverVersion": "8.0.46"
+  },
+  {
+    "version": "8.4",
+    "serverVersion": "8.4.0"
+  },
+  {
+    "version": "9.x",
+    "serverVersion": "9.6.0"
+  }
+]

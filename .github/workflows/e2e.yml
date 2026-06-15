@@ -36,8 +36,9 @@ jobs:
     - name: Generate jobs
       id: generate
       run: |
-        # Map the triggering event onto a matrix depth. Pushes run the cheap
-        # two-corner smoke set; everything else runs the full cross.
+        # Map the triggering event onto a matrix mode. All events currently run
+        # the full cross; the case is kept so a cheaper mode can be reintroduced
+        # per event without touching the workflow wiring.
         case "${{ github.event_name }}" in
           push)               mode=push ;;
           schedule)           mode=schedule ;;
