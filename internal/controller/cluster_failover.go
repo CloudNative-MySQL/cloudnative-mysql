@@ -82,6 +82,18 @@ func (r *ClusterReconciler) reconcileFailover(
 
 	candidate, reason := selectFailoverCandidate(observed)
 	if candidate == "" {
+		// No safe candidate to promote. If no replica is even observed yet, the
+		// cluster is still bootstrapping its replica set: the replicas that would
+		// become candidates are created by reconcileInstances, which runs after this
+		// function and only when we do not take over the reconcile. Blocking here
+		// would therefore deadlock provisioning at "1/3 ready". Yield so the
+		// reconcile proceeds to create them. Once a replica is observed (an
+		// established cluster), keep blocking rather than risk promoting an unsafe
+		// or diverged replica. Failover ordering is otherwise preserved: when a
+		// candidate exists this branch is never reached.
+		if !hasObservedReplica(observed) {
+			return false, ctrl.Result{}, nil
+		}
 		blockReason := fmt.Sprintf("Cannot fail over from %s: %s", observed.PrimaryName, reason)
 		return true, ctrl.Result{RequeueAfter: readyResync}, r.patchOperationPhase(ctx, cluster, observed, phaseBlocked, blockReason, false)
 	}
@@ -117,6 +129,20 @@ func (r *ClusterReconciler) reconcileFailover(
 			fmt.Sprintf("Failing over from %s to %s", observed.PrimaryName, candidate))
 	}
 	return true, ctrl.Result{RequeueAfter: provisioningRequeue}, nil
+}
+
+// hasObservedReplica reports whether any non-primary instance is currently
+// observed with a control status. It distinguishes an established cluster (whose
+// replicas exist and were reachable) from one still bootstrapping its replica
+// set, so failover does not block initial provisioning when there is nothing yet
+// to fail over to.
+func hasObservedReplica(observed observedCluster) bool {
+	for name := range observed.StatusByInstance {
+		if name != observed.PrimaryName {
+			return true
+		}
+	}
+	return false
 }
 
 // selectFailoverCandidate picks the safest reachable replica to promote: it

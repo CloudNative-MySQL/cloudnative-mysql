@@ -55,7 +55,7 @@ jobs:
     name: ${{ matrix.id }}
     needs: generate-jobs
     if: needs.generate-jobs.outputs.kindEnabled == 'true'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: read
     strategy:

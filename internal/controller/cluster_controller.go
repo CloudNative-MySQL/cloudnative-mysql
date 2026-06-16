@@ -184,7 +184,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	cluster.SetDefaults()
 
 	// Nothing to do while the Cluster is being deleted: owned resources are
-	// garbage-collected via owner references, like CloudNativePG.
+	// garbage-collected via owner references.
 	if !cluster.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}

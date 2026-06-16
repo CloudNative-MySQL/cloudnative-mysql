@@ -381,13 +381,19 @@ func TestPodSpecUsesInitContainerAndCertManagerSecrets(t *testing.T) {
 	if got := spec.Containers[0].StartupProbe.HTTPGet; got == nil || got.Path != "/livez" || got.Port.String() != healthPortName {
 		t.Fatalf("startup probe = %#v, want HTTP /livez on health", got)
 	}
-	if spec.Containers[0].ReadinessProbe.PeriodSeconds != 2 {
-		t.Fatalf("readiness period = %d, want 2", spec.Containers[0].ReadinessProbe.PeriodSeconds)
+	if rp := spec.Containers[0].ReadinessProbe; rp.PeriodSeconds != 2 || rp.TimeoutSeconds != 5 || rp.FailureThreshold != 3 {
+		t.Fatalf("readiness probe timing = period %d timeout %d threshold %d, want period 2 timeout 5 threshold 3",
+			rp.PeriodSeconds, rp.TimeoutSeconds, rp.FailureThreshold)
 	}
-	if spec.Containers[0].StartupProbe.PeriodSeconds != 2 || spec.Containers[0].StartupProbe.FailureThreshold != 90 {
-		t.Fatalf("startup probe timing = period %d threshold %d, want period 2 threshold 90",
-			spec.Containers[0].StartupProbe.PeriodSeconds,
-			spec.Containers[0].StartupProbe.FailureThreshold)
+	// The liveness probe must tolerate a busy-but-healthy mysqld: a short timeout
+	// with the default low threshold would restart the Pod under CI load.
+	if lp := spec.Containers[0].LivenessProbe; lp.PeriodSeconds != 10 || lp.TimeoutSeconds != 5 || lp.FailureThreshold != 6 {
+		t.Fatalf("liveness probe timing = period %d timeout %d threshold %d, want period 10 timeout 5 threshold 6",
+			lp.PeriodSeconds, lp.TimeoutSeconds, lp.FailureThreshold)
+	}
+	if sp := spec.Containers[0].StartupProbe; sp.PeriodSeconds != 2 || sp.TimeoutSeconds != 5 || sp.FailureThreshold != 90 {
+		t.Fatalf("startup probe timing = period %d timeout %d threshold %d, want period 2 timeout 5 threshold 90",
+			sp.PeriodSeconds, sp.TimeoutSeconds, sp.FailureThreshold)
 	}
 	volumes := map[string]string{}
 	for _, volume := range spec.Volumes {

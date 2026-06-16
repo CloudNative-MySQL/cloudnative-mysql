@@ -444,6 +444,48 @@ func TestReconcileFailoverBlocksWithoutSafeCandidate(t *testing.T) {
 	}
 }
 
+// TestReconcileFailoverYieldsToProvisioningBeforeAnyReplica covers the initial
+// bootstrap deadlock: the primary briefly looks unreachable while replicas have
+// not been created yet. With no replica to fail over to, failover must yield
+// (handled=false) so reconcileInstances can create the replicas, rather than
+// Blocking the cluster forever at "1/3 ready".
+func TestReconcileFailoverYieldsToProvisioningBeforeAnyReplica(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cluster, reconciler, control := failoverCluster(t, 0)
+	observed := unreachablePrimaryObserved()
+	// No replica has been observed yet (still bootstrapping).
+	observed.StatusByInstance = map[string]*webserver.Status{}
+	observed.GTIDByInstance = map[string]string{}
+	observed.ReadyInstances = 0
+
+	handled, _, err := reconciler.reconcileFailover(ctx, cluster, observed.Plan, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handled {
+		t.Fatal("failover must not take over the reconcile before any replica exists")
+	}
+	if len(control.promoted) != 0 {
+		t.Fatalf("nothing to promote during bootstrap, promoted=%v", control.promoted)
+	}
+	// The old primary Pod must not be fenced during bootstrap.
+	gotPod := &corev1.Pod{}
+	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: testPrimary}, gotPod); err != nil {
+		t.Fatal(err)
+	}
+	if gotPod.DeletionTimestamp != nil {
+		t.Fatal("primary Pod must not be fenced while the cluster is still provisioning")
+	}
+	gotCluster := &mysqlv1alpha1.Cluster{}
+	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}, gotCluster); err != nil {
+		t.Fatal(err)
+	}
+	if gotCluster.Status.Phase == phaseBlocked {
+		t.Fatalf("cluster must not be Blocked during bootstrap, phase=%q", gotCluster.Status.Phase)
+	}
+}
+
 func TestReconcileFailoverClearsMarkerWhenPrimaryHealthy(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

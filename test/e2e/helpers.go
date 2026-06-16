@@ -98,8 +98,9 @@ func dumpE2EDiagnostics() {
 	}{
 		{name: "all clusters", args: []string{"get", "clusters", "-A", "-o", "yaml"}},
 		{name: "all pods", args: []string{"get", "pods", "-A", "-o", "wide"}},
+		{name: "events in test namespace", args: []string{"get", "events", "-n", testNamespace, "--sort-by=.lastTimestamp"}},
 		{name: "all events", args: []string{"get", "events", "-A", "--sort-by=.lastTimestamp"}},
-		{name: "operator pod logs", args: []string{"logs", "-l", "control-plane=controller-manager", "-n", namespace, "--tail=100"}},
+		{name: "operator pod logs", args: []string{"logs", "-l", "control-plane=controller-manager", "-n", namespace, "--tail=300"}},
 		{name: "node capacity and pressure", args: []string{"describe", "nodes"}},
 	}
 	for _, dump := range dumps {
@@ -109,6 +110,28 @@ func dumpE2EDiagnostics() {
 			continue
 		}
 		_, _ = fmt.Fprintf(GinkgoWriter, "\n%s:\n%s\n", dump.name, out)
+	}
+	dumpInstanceLogs()
+}
+
+// dumpInstanceLogs prints recent logs from every MySQL instance Pod in the
+// current test namespace. When a cluster stalls (e.g. replicas never join), the
+// instance-runner and mysqld output here is what explains why; the operator log
+// alone does not show it.
+func dumpInstanceLogs() {
+	pods, err := kubectl("get", "pods", "-n", testNamespace,
+		"-o", "jsonpath={range .items[*]}{.metadata.name}{'\\n'}{end}")
+	if err != nil {
+		_, _ = fmt.Fprintf(GinkgoWriter, "\nFailed to list pods in %s: %v\n%s\n", testNamespace, err, pods)
+		return
+	}
+	for _, pod := range strings.Fields(pods) {
+		out, err := kubectl("logs", pod, "-n", testNamespace, "-c", "mysql", "--tail=80")
+		if err != nil {
+			// Pod may still be in an init container; surface that too.
+			out, _ = kubectl("logs", pod, "-n", testNamespace, "--all-containers", "--tail=80")
+		}
+		_, _ = fmt.Fprintf(GinkgoWriter, "\ninstance %s logs:\n%s\n", pod, out)
 	}
 }
 
@@ -154,22 +177,50 @@ func clusterField(name, jsonpath string) (string, error) {
 }
 
 // expectClusterReady blocks until the named Cluster reports Ready with the
-// expected number of ready instances and an elected primary.
+// expected number of ready instances and an elected primary. On timeout it dumps
+// cluster-wide diagnostics (Cluster status, Pod states, events, operator logs,
+// node capacity) before failing: a cluster that never converges is the most
+// common e2e failure, and without this dump the CI logs reveal nothing about why.
 func expectClusterReady(name string, instances int, timeout time.Duration) {
-	Eventually(func(g Gomega) {
+	GinkgoHelper()
+	check := func() error {
 		ready, err := clusterField(name, "{.status.conditions[?(@.type=='Ready')].status}")
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(ready).To(Equal("True"), "Cluster %s is not Ready yet", name)
-
+		if err != nil {
+			return fmt.Errorf("reading Ready condition: %w", err)
+		}
+		if ready != "True" {
+			return fmt.Errorf("cluster %s is not Ready yet", name)
+		}
 		readyInstances, err := clusterField(name, "{.status.readyInstances}")
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(readyInstances).To(Equal(fmt.Sprintf("%d", instances)),
-			"Cluster %s does not have %d ready instances yet", name, instances)
-
+		if err != nil {
+			return fmt.Errorf("reading readyInstances: %w", err)
+		}
+		if want := fmt.Sprintf("%d", instances); readyInstances != want {
+			return fmt.Errorf("cluster %s has %q ready instances, want %d", name, readyInstances, instances)
+		}
 		primary, err := clusterField(name, "{.status.currentPrimary}")
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(primary).NotTo(BeEmpty(), "Cluster %s has no elected primary yet", name)
-	}, timeout, 5*time.Second).Should(Succeed())
+		if err != nil {
+			return fmt.Errorf("reading currentPrimary: %w", err)
+		}
+		if primary == "" {
+			return fmt.Errorf("cluster %s has no elected primary yet", name)
+		}
+		return nil
+	}
+
+	deadline := time.Now().Add(timeout)
+	for {
+		lastErr := check()
+		if lastErr == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			By(fmt.Sprintf("cluster %s did not become ready within %s; dumping diagnostics", name, timeout))
+			dumpE2EDiagnostics()
+			Fail(fmt.Sprintf("cluster %s did not become ready within %s: %v", name, timeout, lastErr))
+		}
+		time.Sleep(5 * time.Second)
+	}
 }
 
 // clusterPrimary returns the current primary Pod name for a cluster.

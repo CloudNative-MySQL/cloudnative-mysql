@@ -89,19 +89,32 @@ func (r *ClusterReconciler) podSpec(cluster *mysqlv1alpha1.Cluster, plan cluster
 			VolumeMounts:    volumeMounts(),
 			Resources:       cluster.Spec.Resources,
 			SecurityContext: cluster.Spec.SecurityContext,
+			// /readyz and /livez run a live MySQL ping plus SHOW REPLICA STATUS, so
+			// under CPU/IO pressure (e.g. several instances bootstrapping on a small
+			// CI node) a single probe can take longer than the 1s Kubernetes default
+			// TimeoutSeconds. With the default 3-failure threshold that briefly flips
+			// the primary NotReady, which makes the operator treat it as failed and
+			// enter failover handling before replicas are even provisioned, so a
+			// cluster can stall at "1/3 ready" indefinitely. Set explicit, generous
+			// timeouts and failure thresholds so transient slowness does not flap
+			// readiness or restart a busy-but-healthy mysqld.
 			ReadinessProbe: &corev1.Probe{
 				ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
 					Path: "/readyz",
 					Port: intstr.FromString("health"),
 				}},
-				PeriodSeconds: 2,
+				PeriodSeconds:    2,
+				TimeoutSeconds:   5,
+				FailureThreshold: 3,
 			},
 			LivenessProbe: &corev1.Probe{
 				ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
 					Path: "/livez",
 					Port: intstr.FromString("health"),
 				}},
-				PeriodSeconds: 10,
+				PeriodSeconds:    10,
+				TimeoutSeconds:   5,
+				FailureThreshold: 6,
 			},
 			StartupProbe: &corev1.Probe{
 				ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
@@ -109,6 +122,7 @@ func (r *ClusterReconciler) podSpec(cluster *mysqlv1alpha1.Cluster, plan cluster
 					Port: intstr.FromString("health"),
 				}},
 				PeriodSeconds:    2,
+				TimeoutSeconds:   5,
 				FailureThreshold: 90,
 			},
 		}},
