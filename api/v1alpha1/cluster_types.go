@@ -882,6 +882,15 @@ type ClusterStatus struct {
 	// +optional
 	FencedInstances []string `json:"fencedInstances,omitempty"`
 
+	// FailedInstances are instances whose Pod shows positive evidence of being
+	// unable to run: a Failed Pod phase, or a container stuck in CrashLoopBackOff
+	// after repeated restarts. Unlike a not-yet-ready instance (which is expected
+	// during initial provisioning), a failed instance is a degradation regardless
+	// of whether the cluster ever finished provisioning, so it is surfaced
+	// independently of the phase. It is the cluster's "unhealthy" bucket.
+	// +optional
+	FailedInstances []string `json:"failedInstances,omitempty"`
+
 	// PrimaryFailingSince records when the current primary first became
 	// unreachable. It is used to enforce spec.failoverDelay before an automatic
 	// failover, and is cleared once the primary is healthy again.
@@ -891,6 +900,17 @@ type ClusterStatus struct {
 	// LatestGeneratedNode is the serial of the latest generated instance.
 	// +optional
 	LatestGeneratedNode int `json:"latestGeneratedNode,omitempty"`
+
+	// EstablishedAt records the first time the cluster reached full readiness
+	// (every instance ready together), marking that it completed initial
+	// provisioning at least once. It is sticky: once set it is never cleared, so a
+	// later degradation cannot reset it. Its presence is what distinguishes a
+	// cluster that is still being provisioned (a drop below readiness is expected)
+	// from an established one (a drop below readiness is a degradation). It is
+	// deliberately independent of Phase, which intermediate reconcile steps
+	// re-stamp and which therefore cannot carry this fact reliably.
+	// +optional
+	EstablishedAt *metav1.Time `json:"establishedAt,omitempty"`
 
 	// Phase is a high-level human-readable cluster phase.
 	// +optional

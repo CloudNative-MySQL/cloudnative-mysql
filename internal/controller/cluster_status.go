@@ -62,6 +62,11 @@ type observedCluster struct {
 	// They are excluded from routing and from failover candidacy and are kept
 	// read-only by their in-Pod reconciler.
 	FencedInstances []string
+	// FailedInstances are instances whose Pod shows positive evidence of being
+	// unable to run (Failed phase or a container stuck in CrashLoopBackOff after
+	// repeated restarts). They mark a degradation independent of whether the
+	// cluster ever finished provisioning.
+	FailedInstances []string
 	// ContinuousArchiving holds the primary's archiving frontier/health when
 	// continuous archiving is enabled; nil otherwise.
 	ContinuousArchiving *mysqlv1alpha1.ContinuousArchivingStatus
@@ -92,6 +97,9 @@ func (r *ClusterReconciler) observe(ctx context.Context, cluster *mysqlv1alpha1.
 		}
 		if isPodFenced(pod) {
 			observed.FencedInstances = append(observed.FencedInstances, inst.Name)
+		}
+		if podFailed(pod) {
+			observed.FailedInstances = append(observed.FailedInstances, inst.Name)
 		}
 		if !podReady(pod) {
 			continue
@@ -144,6 +152,24 @@ func (r *ClusterReconciler) observe(ctx context.Context, cluster *mysqlv1alpha1.
 	case observed.Ready:
 		observed.Phase = phaseReady
 		observed.PhaseReason = "All instances are ready"
+	case len(observed.FailedInstances) > 0:
+		// A Pod that cannot even start (crashlooping or Failed) is positive
+		// evidence of a problem, not setup still in progress. Surface it as
+		// Degraded regardless of whether the cluster ever finished provisioning, so
+		// a cluster that wedges during initial bring-up does not sit silently in
+		// "Provisioning" forever.
+		observed.Phase = phaseDegraded
+		observed.PhaseReason = degradedReason(observed, plan)
+	case clusterEstablished(cluster):
+		// The cluster has already completed initial provisioning (it reached a
+		// Ready/operational phase before) but is no longer fully ready. A drop
+		// below full readiness, whether some instances are missing or every one
+		// is gone, is a degradation, not setup, so surface it as Degraded and
+		// name the lagging instances so an operator can see what is wrong (e.g. a
+		// partitioned or crashed node) instead of it silently sitting in
+		// "Provisioning" or "Pending".
+		observed.Phase = phaseDegraded
+		observed.PhaseReason = degradedReason(observed, plan)
 	case observed.ReadyInstances == 0:
 		observed.Phase = phasePending
 		observed.PhaseReason = "Waiting for the primary instance"
@@ -152,6 +178,98 @@ func (r *ClusterReconciler) observe(ctx context.Context, cluster *mysqlv1alpha1.
 		observed.PhaseReason = fmt.Sprintf("%d/%d instances ready", observed.ReadyInstances, plan.Instances)
 	}
 	return observed, nil
+}
+
+// clusterEstablished reports whether the cluster has finished its initial
+// provisioning at least once. It reads the sticky Status.EstablishedAt marker,
+// which is recorded the first time the cluster becomes Ready and never cleared.
+// Once established, a later drop below full readiness is reported as Degraded
+// rather than Provisioning. Keying off EstablishedAt rather than the live phase
+// matters: intermediate reconcile steps re-stamp the phase to Provisioning
+// (waiting on certs, backup or recovery checks), which previously erased the
+// fact that the cluster was once operational and let a broken cluster fall back
+// to looking like first-time setup.
+func clusterEstablished(cluster *mysqlv1alpha1.Cluster) bool {
+	return cluster.Status.EstablishedAt != nil
+}
+
+// establishedPhase reports whether a persisted phase implies the cluster had
+// already completed initial provisioning. It exists only to backfill
+// EstablishedAt for clusters last reconciled before that field existed; new
+// establishment is recorded directly when the cluster first becomes Ready.
+func establishedPhase(phase string) bool {
+	switch phase {
+	case "", phasePending, phaseProvisioning:
+		return false
+	default:
+		return true
+	}
+}
+
+// crashLoopRestartThreshold is how many container restarts must accumulate
+// before a CrashLoopBackOff Pod is treated as a failed instance rather than a
+// transient restart during normal startup (e.g. a replica briefly restarting
+// while it waits for the primary to accept connections).
+const crashLoopRestartThreshold = 3
+
+// podFailed reports positive evidence that an instance Pod cannot run: the Pod
+// reached the Failed phase, or a container is stuck in CrashLoopBackOff after
+// repeated restarts. This is deliberately narrower than "not ready" so that a
+// node which simply has not finished coming up is not mistaken for one that
+// cannot start at all.
+func podFailed(pod *corev1.Pod) bool {
+	if pod.Status.Phase == corev1.PodFailed {
+		return true
+	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		if w := cs.State.Waiting; w != nil && w.Reason == "CrashLoopBackOff" &&
+			cs.RestartCount >= crashLoopRestartThreshold {
+			return true
+		}
+	}
+	return false
+}
+
+// degradedReason describes which desired instances are keeping the cluster from
+// being fully ready, so the Degraded phase points at the problem. Failed
+// instances (cannot start) are called out separately from instances that are
+// merely unreachable or still not ready.
+func degradedReason(observed observedCluster, plan clusterPlan) string {
+	base := fmt.Sprintf("%d/%d instances ready", observed.ReadyInstances, plan.Instances)
+	failed := map[string]bool{}
+	for _, name := range observed.FailedInstances {
+		failed[name] = true
+	}
+	var detail []string
+	if len(observed.FailedInstances) > 0 {
+		detail = append(detail, "failing to start: "+strings.Join(observed.FailedInstances, ", "))
+	}
+	var notReady []string
+	for _, name := range unreadyInstanceNames(observed) {
+		if !failed[name] {
+			notReady = append(notReady, name)
+		}
+	}
+	if len(notReady) > 0 {
+		detail = append(detail, "unreachable or not ready: "+strings.Join(notReady, ", "))
+	}
+	if len(detail) == 0 {
+		return base
+	}
+	return base + "; " + strings.Join(detail, "; ")
+}
+
+// unreadyInstanceNames returns the desired instances that are not reporting
+// ready, in ordinal order: either unreachable (no control status was obtained)
+// or reachable but not ready.
+func unreadyInstanceNames(observed observedCluster) []string {
+	var out []string
+	for _, name := range observed.InstanceNames {
+		if status, ok := observed.StatusByInstance[name]; !ok || !status.IsReady {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // detectDivergedReplicas returns reachable non-primary instances whose executed
@@ -244,6 +362,15 @@ func (r *ClusterReconciler) patchStatus(ctx context.Context, cluster *mysqlv1alp
 	latest.Status.ReadyInstances = observed.ReadyInstances
 	latest.Status.DivergedInstances = observed.DivergedInstances
 	latest.Status.FencedInstances = observed.FencedInstances
+	latest.Status.FailedInstances = observed.FailedInstances
+	// EstablishedAt is sticky: record it the first time the cluster is fully ready
+	// (or backfill it for a cluster whose persisted phase already implies it was
+	// operational, for upgrades that predate this field) and never clear it. It is
+	// what clusterEstablished reads, so a transient drop to a provisioning phase no
+	// longer erases that the cluster was once established.
+	if latest.Status.EstablishedAt == nil && (observed.Ready || establishedPhase(before.Status.Phase)) {
+		latest.Status.EstablishedAt = &metav1.Time{Time: time.Now()}
+	}
 	latest.Status.Certificates = r.certificateStatus(ctx, latest, observed.Plan)
 	latest.Status.ContinuousArchiving = observed.ContinuousArchiving
 	if observed.ContinuousArchiving != nil {
@@ -373,7 +500,7 @@ func (r *ClusterReconciler) recordPhaseTransition(cluster *mysqlv1alpha1.Cluster
 		return
 	}
 	eventType := corev1.EventTypeNormal
-	if observed.Phase == phaseBlocked {
+	if observed.Phase == phaseBlocked || observed.Phase == phaseDegraded {
 		eventType = corev1.EventTypeWarning
 	}
 	r.Recorder.Event(cluster, eventType, observed.Phase, observed.PhaseReason)

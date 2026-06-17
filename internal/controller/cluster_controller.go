@@ -77,6 +77,14 @@ const (
 	// Cluster's reloadAnnotation to decide whether a reload is still pending,
 	// making the SET GLOBAL pass idempotent without a CRD status change.
 	reloadAppliedAnnotation = "cloudnative-mysql.cloudnative-mysql.io/reload-applied"
+	// unreachableSinceAnnotation records, on an instance Pod, the RFC3339 time the
+	// operator first failed to reach that instance's control endpoint. Once an
+	// established replica has been unreachable for deRouteGracePeriod it is pulled
+	// out of the ro/r routing Services (routable=false) so reads stop being served
+	// from a partitioned node; the annotation and routing are restored as soon as
+	// the instance is reachable again. The grace period absorbs transient blips so
+	// a single failed poll does not churn Service endpoints.
+	unreachableSinceAnnotation = "cloudnative-mysql.cloudnative-mysql.io/unreachable-since"
 
 	configMapAnnotation       = "cloudnative-mysql.cloudnative-mysql.io/config-map"
 	configHashAnnotation      = "cloudnative-mysql.cloudnative-mysql.io/config-hash"
@@ -112,6 +120,9 @@ const (
 	// readyResync re-polls the instance manager once the cluster is ready so the
 	// reported status (GTID, role, readiness) does not go stale between events.
 	readyResync = 30 * time.Second
+	// deRouteGracePeriod bounds how long an established replica may be unreachable
+	// before the operator pulls it out of the ro/r routing Services.
+	deRouteGracePeriod = 30 * time.Second
 )
 
 // InstanceControlClient reads instance state over the mTLS control API. Role
