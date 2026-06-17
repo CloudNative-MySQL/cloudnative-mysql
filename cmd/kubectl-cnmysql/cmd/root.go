@@ -15,7 +15,7 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-// Package cmd implements the kubectl-cloudnative-mysql command tree.
+// Package cmd implements the kubectl-cnmysql command tree.
 package cmd
 
 import (
@@ -30,12 +30,12 @@ import (
 // (--kubeconfig, --context, -n/--namespace, ...).
 var configFlags = genericclioptions.NewConfigFlags(true)
 
-// NewRootCommand builds the top-level `kubectl cloudnative-mysql` command.
+// NewRootCommand builds the top-level `kubectl cnmysql` command.
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "cloudnative-mysql",
+		Use:   "cnmysql",
 		Short: "Manage and inspect cloudnative-mysql clusters",
-		Long: "kubectl cloudnative-mysql is a kubectl plugin for managing " +
+		Long: "kubectl cnmysql is a kubectl plugin for managing " +
 			"cloudnative-mysql (Percona Server) clusters.",
 		SilenceUsage:  true,
 		SilenceErrors: true,

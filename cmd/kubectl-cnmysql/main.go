@@ -15,8 +15,8 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-// Command kubectl-cloudnative-mysql is a kubectl plugin for managing cloudnative-mysql clusters.
-// Installed in $PATH it is invoked as `kubectl cloudnative-mysql <command>`.
+// Command kubectl-cnmysql is a kubectl plugin for managing cloudnative-mysql clusters.
+// Installed in $PATH it is invoked as `kubectl cnmysql <command>`.
 package main
 
 import (

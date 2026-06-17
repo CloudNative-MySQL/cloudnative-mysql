@@ -15,7 +15,7 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-// Package plugin holds the shared infrastructure for the kubectl-cloudnative-mysql
+// Package plugin holds the shared infrastructure for the kubectl-cnmysql
 // plugin: Kubernetes client setup, output formatting and small helpers reused
 // across commands.
 package plugin

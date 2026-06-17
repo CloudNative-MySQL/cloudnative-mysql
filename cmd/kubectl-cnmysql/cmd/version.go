@@ -37,7 +37,7 @@ func newVersionCommand() *cobra.Command {
 		Short: "Print plugin version information",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			fmt.Printf("kubectl-cloudnative-mysql version %s\n", Version)
+			fmt.Printf("kubectl-cnmysql version %s\n", Version)
 			fmt.Printf("  commit:     %s\n", Commit)
 			fmt.Printf("  build date: %s\n", BuildDate)
 			fmt.Printf("  go version: %s\n", runtime.Version())
