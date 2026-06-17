@@ -91,7 +91,8 @@ func runReinit(ctx context.Context, clusterName, instance string, yes bool) erro
 	}
 
 	if !plugin.Confirm(
-		fmt.Sprintf("Re-initialise %q? This DESTROYS its data and re-clones from a backup; any data only on this instance is lost.", instance),
+		fmt.Sprintf("Re-initialise %q? This DESTROYS its data and re-clones from a backup; "+
+			"any data only on this instance is lost.", instance),
 		yes,
 	) {
 		fmt.Println("aborted")
@@ -123,7 +124,7 @@ func splitReinit(raw string) []string {
 		return nil
 	}
 	var out []string
-	for _, part := range strings.Split(raw, ",") {
+	for part := range strings.SplitSeq(raw, ",") {
 		if name := strings.TrimSpace(part); name != "" {
 			out = append(out, name)
 		}

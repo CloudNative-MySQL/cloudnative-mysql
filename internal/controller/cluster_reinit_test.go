@@ -175,7 +175,7 @@ func TestReinitRequestedInstancesParsing(t *testing.T) {
 	cluster := baseCluster()
 	cluster.Annotations = map[string]string{reinitAnnotation: " demo-2 , ,demo-3 "}
 	got := reinitRequestedInstances(cluster)
-	if len(got) != 2 || got[0] != "demo-2" || got[1] != "demo-3" {
+	if len(got) != 2 || got[0] != "demo-2" || got[1] != testReplica3 {
 		t.Fatalf("reinitRequestedInstances = %v, want [demo-2 demo-3]", got)
 	}
 	if reinitRequested(cluster, "demo-4") {

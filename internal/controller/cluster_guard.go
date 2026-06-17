@@ -203,8 +203,8 @@ func (r *ClusterReconciler) reconcileFencing(ctx context.Context, cluster *mysql
 		deRouted := false
 		newlyUnreachable := false
 		if deRouteEligible && name != observed.PrimaryName && !fenced[name] && !reachable[name] {
-			switch since := pod.Annotations[unreachableSinceAnnotation]; {
-			case since == "":
+			switch since := pod.Annotations[unreachableSinceAnnotation]; since {
+			case "":
 				if pod.Annotations == nil {
 					pod.Annotations = map[string]string{}
 				}

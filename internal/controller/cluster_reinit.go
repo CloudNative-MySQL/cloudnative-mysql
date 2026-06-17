@@ -41,7 +41,7 @@ func reinitRequestedInstances(cluster *mysqlv1alpha1.Cluster) []string {
 		return nil
 	}
 	var out []string
-	for _, part := range strings.Split(raw, ",") {
+	for part := range strings.SplitSeq(raw, ",") {
 		if name := strings.TrimSpace(part); name != "" {
 			out = append(out, name)
 		}
