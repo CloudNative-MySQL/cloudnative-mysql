@@ -43,7 +43,7 @@ jobs:
     needs: generate-jobs
     permissions:
       contents: read
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
