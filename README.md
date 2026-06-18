@@ -1,22 +1,41 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/CloudNative-MySQL/cloudnative-mysql/main/docs/static/img/cnmysql.png" alt="CloudNative MySQL" width="200" />
+</p>
+
+<p align="center">
+  <a href="https://github.com/CloudNative-MySQL/cloudnative-mysql/actions/workflows/test.yml"><img src="https://github.com/CloudNative-MySQL/cloudnative-mysql/actions/workflows/test.yml/badge.svg" alt="Unit Tests" /></a>
+  <a href="https://github.com/CloudNative-MySQL/cloudnative-mysql/actions/workflows/lint.yml"><img src="https://github.com/CloudNative-MySQL/cloudnative-mysql/actions/workflows/lint.yml/badge.svg" alt="Lint" /></a>
+  <a href="https://github.com/CloudNative-MySQL/cloudnative-mysql/actions/workflows/e2e.yml"><img src="https://github.com/CloudNative-MySQL/cloudnative-mysql/actions/workflows/e2e.yml/badge.svg" alt="E2E Tests" /></a>
+  <a href="https://github.com/CloudNative-MySQL/cloudnative-mysql/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License" /></a>
+  <a href="https://goreportcard.com/report/github.com/CloudNative-MySQL/cloudnative-mysql"><img src="https://goreportcard.com/badge/github.com/CloudNative-MySQL/cloudnative-mysql" alt="Go Report Card" /></a>
+  <a href="https://cloudnative-mysql.io"><img src="https://img.shields.io/badge/docs-cloudnative--mysql.io-blue" alt="Documentation" /></a>
+</p>
+
 # CloudNative MySQL
 
-A Kubernetes operator for [Percona Server for MySQL](https://www.percona.com/software/mysql-database/percona-server). It runs MySQL clusters with operator-owned lifecycle management, GTID replication with automatic failover, physical backups to S3-compatible storage, and point-in-time recovery.
+A Kubernetes operator for [Percona Server for MySQL](https://www.percona.com/software/mysql-database/percona-server). It runs MySQL clusters with operator-owned lifecycle management, GTID replication with automatic failover, physical backups to S3-compatible object storage, and point-in-time recovery.
 
-> **Note:** CloudNative MySQL is an independent project. It is **not** affiliated with, endorsed by, or associated with the [CNCF](https://www.cncf.io/) or the [CloudNativePG](https://cloudnative-pg.io/) project and its maintainers.
+> CloudNative MySQL is an independent project. It is not affiliated with, endorsed by, or associated with the [CNCF](https://www.cncf.io/) or the [CloudNativePG](https://cloudnative-pg.io/) project and its maintainers.
 
 Full documentation at **[cloudnative-mysql.io](https://cloudnative-mysql.io)**.
 
 ## What It Does
 
-Declare a `Cluster` resource and the operator provisions Pods, PVCs, credentials, TLS material, and role-routed Services. It then handles:
+Declare a `Cluster` resource and the operator provisions Pods, PVCs, credentials, TLS material, and role-routed Services.
 
-- **Replication and failover.** One primary plus GTID-based replicas. Planned switchover for upgrades, automatic failover when the primary goes away, and rejoin of a former primary as a replica.
-- **Role-routed Services.** Each cluster gets a read-write endpoint for the primary (`-rw`), a read-only endpoint for replicas (`-ro`), and a read endpoint for any ready instance (`-r`). Routing follows the `mysql.cloudnative-mysql.io/role` label and tracks failover automatically.
-- **Backups.** One-shot physical backups via XtraBackup to S3-compatible object storage. `Backup` and `ScheduledBackup` resources cover ad-hoc and cron-driven archives.
-- **Point-in-time recovery.** Continuous binlog archiving lets you restore to a chosen timestamp, not just the last full backup.
-- **Declarative databases and users.** `Database` resources manage schemas, owners, and privileges without running SQL by hand.
-- **Image catalogs.** `ImageCatalog` and `ClusterImageCatalog` resolve instance images from the MySQL major version so you can pin or roll versions centrally.
-- **Monitoring and TLS.** Prometheus metrics with mTLS between the operator and instances, plus MySQL TLS.
+**Replication and failover.** One primary plus GTID-based replicas. Planned switchover for upgrades, automatic failover when the primary goes down, and rejoin of a former primary as a replica.
+
+Each cluster gets three Services: a read-write endpoint for the primary (`-rw`), a read-only endpoint for replicas (`-ro`), and a read endpoint for any ready instance (`-r`). Routing follows the `mysql.cloudnative-mysql.io/role` label and tracks failover automatically.
+
+Physical backups run through XtraBackup to S3-compatible object storage. `Backup` resources trigger one-shot archives; `ScheduledBackup` handles cron-driven runs.
+
+Continuous binlog archiving feeds point-in-time recovery so you can restore to a chosen timestamp, not just the last full backup.
+
+`Database` resources handle schemas, owners, and privileges declaratively with no hand-run SQL.
+
+`ImageCatalog` and `ClusterImageCatalog` resolve instance images from the MySQL major version for centralized version pinning.
+
+Prometheus metrics with mTLS between the operator and instances, plus MySQL TLS.
 
 API group: `mysql.cloudnative-mysql.io/v1alpha1`. Resources: `Cluster`, `Database`, `Backup`, `ScheduledBackup`, `ImageCatalog`, and `ClusterImageCatalog`. See the [API reference](https://cloudnative-mysql.io/api-reference) for every field.
 
