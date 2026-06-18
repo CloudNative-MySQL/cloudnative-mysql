@@ -76,37 +76,55 @@ func (r *ClusterReconciler) reconcileUpgrade(
 	}
 
 	// When the primary is stale and the strategy is supervised, stop the entire
-	// upgrade and wait for the user, even if replicas are also stale.
-	if primaryStale, ok := candidateByName(candidates, observed.PrimaryName); ok {
-		if cluster.Spec.PrimaryUpdateStrategy == mysqlv1alpha1.PrimaryUpdateStrategySupervised {
-			logf.FromContext(ctx).Info("Primary instance manager is stale, waiting for user",
-				"instance", observed.PrimaryName, "strategy", "supervised")
-			return true, reconcile.Result{RequeueAfter: readyResync}, r.patchStatus(ctx, cluster, observedCluster{
-				Phase:          phaseWaitingForUser,
-				PhaseReason:    "Primary instance manager is stale (operator upgrade); waiting for user to trigger the update",
-				Ready:          false,
-				Progressing:    true,
-				Plan:           plan,
-				PrimaryName:    observed.PrimaryName,
-				InstanceNames:  observed.InstanceNames,
-				ReadyInstances: observed.ReadyInstances,
-				GTIDByInstance: observed.GTIDByInstance,
-			})
-		}
-		_ = primaryStale
+	// upgrade and wait for the user, even if replicas are also stale. This only
+	// applies to multi-instance clusters: a single-instance primary cannot be
+	// switched over, so it is always upgraded in place (CNPG does the same).
+	if _, ok := candidateByName(candidates, observed.PrimaryName); ok &&
+		plan.Instances > 1 &&
+		cluster.Spec.PrimaryUpdateStrategy == mysqlv1alpha1.PrimaryUpdateStrategySupervised {
+		logf.FromContext(ctx).Info("Primary instance manager is stale, waiting for user",
+			"instance", observed.PrimaryName, "strategy", "supervised")
+		return true, reconcile.Result{RequeueAfter: readyResync}, r.patchStatus(ctx, cluster, observedCluster{
+			Phase:          phaseWaitingForUser,
+			PhaseReason:    "Primary instance manager is stale (operator upgrade); waiting for user to trigger the update",
+			Ready:          false,
+			Progressing:    true,
+			Plan:           plan,
+			PrimaryName:    observed.PrimaryName,
+			InstanceNames:  observed.InstanceNames,
+			ReadyInstances: observed.ReadyInstances,
+			GTIDByInstance: observed.GTIDByInstance,
+		})
 	}
 
 	instance := candidates[0]
-	log := logf.FromContext(ctx)
 
-	// Primary upgrade via switchover: promote a healthy replica first.
+	// Primary upgrade via switchover: promote a healthy replica first. With a
+	// single instance, or no healthy replica to switch to, fall through to the
+	// in-place restart below.
 	if instance.Name == observed.PrimaryName && plan.Instances > 1 &&
 		cluster.Spec.PrimaryUpdateMethod != mysqlv1alpha1.PrimaryUpdateMethodRestart {
-		return r.upgradePrimaryViaSwitchover(ctx, cluster, plan, observed)
+		if handled, result, err := r.upgradePrimaryViaSwitchover(ctx, cluster, plan, observed); handled || err != nil {
+			return handled, result, err
+		}
 	}
 
-	// Delete the Pod. The next reconcile recreates it from the new spec with the
-	// updated operator image in the bootstrap-controller init container.
+	return r.rollInstanceForUpgrade(ctx, cluster, plan, observed, candidates, instance, targetHash)
+}
+
+// rollInstanceForUpgrade deletes the instance Pod so the next reconcile recreates
+// it from the new spec with the updated operator image in the bootstrap-controller
+// init container. This is the rolling-update (non-in-place) upgrade path.
+func (r *ClusterReconciler) rollInstanceForUpgrade(
+	ctx context.Context,
+	cluster *mysqlv1alpha1.Cluster,
+	plan clusterPlan,
+	observed observedCluster,
+	candidates []upgradeCandidate,
+	instance upgradeCandidate,
+	targetHash string,
+) (bool, reconcile.Result, error) {
+	log := logf.FromContext(ctx)
 	log.Info("Upgrading instance manager",
 		"instance", instance.Name, "reportedHash", instance.ReportedHash, "targetHash", targetHash)
 	if err := r.Delete(ctx, &corev1.Pod{
@@ -138,7 +156,9 @@ func (r *ClusterReconciler) reconcileUpgrade(
 }
 
 // upgradePrimaryViaSwitchover triggers a switchover from the stale primary to a
-// healthy replica so the primary can be upgraded without downtime.
+// healthy replica so the primary can be upgraded without downtime. It returns
+// handled=false (with a nil error) when there is no healthy replica to switch
+// to, so the caller falls back to an in-place primary restart.
 func (r *ClusterReconciler) upgradePrimaryViaSwitchover(
 	ctx context.Context,
 	cluster *mysqlv1alpha1.Cluster,
