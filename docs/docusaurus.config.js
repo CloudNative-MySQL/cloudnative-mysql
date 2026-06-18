@@ -5,9 +5,9 @@ const darkCodeTheme = require('prism-react-renderer').themes.dracula;
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: 'cloudnative-mysql',
-  tagline: 'Kubernetes operator for Cloudnative MySQL',
-  favicon: 'img/favicon.svg',
+  title: 'CloudNative MySQL',
+  tagline: 'A Kubernetes operator for Percona Server for MySQL',
+  favicon: 'img/cnmysql.png',
   url: 'https://cloudnative-mysql.io',
   baseUrl: '/',
   organizationName: 'CloudNative-MySQL',
@@ -46,22 +46,29 @@ const config = {
     ({
       image: 'img/social-card.svg',
       navbar: {
-        title: 'cloudnative-mysql',
+        title: 'CloudNative MySQL',
         logo: {
-          alt: 'cloudnative-mysql',
-          src: 'img/logo.svg',
+          alt: 'CloudNative MySQL',
+          src: 'img/cnmysql.png',
+          srcDark: 'img/cnmysql.png',
         },
         items: [
           {
             type: 'docSidebar',
             sidebarId: 'docsSidebar',
             position: 'left',
-            label: 'Documentation',
+            label: 'Docs',
+          },
+          {
+            to: '/api-reference',
+            label: 'API',
+            position: 'left',
           },
           {
             href: 'https://github.com/CloudNative-MySQL/cloudnative-mysql',
             position: 'right',
-            label: 'GitHub',
+            className: 'header-github-link',
+            'aria-label': 'GitHub repository',
           },
         ],
       },
@@ -76,8 +83,29 @@ const config = {
                 to: '/',
               },
               {
-                label: 'Point-In-Time Recovery',
-                to: '/pitr',
+                label: 'Quickstart',
+                to: '/quickstart',
+              },
+              {
+                label: 'API Reference',
+                to: '/api-reference',
+              },
+            ],
+          },
+          {
+            title: 'Guides',
+            items: [
+              {
+                label: 'Replication & Failover',
+                to: '/replication-failover',
+              },
+              {
+                label: 'Backup & Recovery',
+                to: '/backup-recovery',
+              },
+              {
+                label: 'Troubleshooting',
+                to: '/troubleshooting',
               },
             ],
           },
@@ -88,10 +116,14 @@ const config = {
                 label: 'GitHub',
                 href: 'https://github.com/CloudNative-MySQL/cloudnative-mysql',
               },
+              {
+                label: 'Percona Server',
+                href: 'https://www.percona.com/software/mysql-database/percona-server',
+              },
             ],
           },
         ],
-        copyright: `Copyright © ${new Date().getFullYear()} The CloudNative MySQL Authors.`,
+        copyright: `Copyright &copy; ${new Date().getFullYear()} The CloudNative MySQL Authors. Built with <a href="https://docusaurus.io/" target="_blank">Docusaurus</a>.<br/><small>CloudNative MySQL is an independent project, not affiliated with the CNCF or CloudNativePG.</small>`,
       },
       prism: {
         theme: lightCodeTheme,

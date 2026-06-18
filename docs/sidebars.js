@@ -9,6 +9,11 @@ const sidebars = {
       label: 'Overview',
     },
     {
+      type: 'html',
+      value: '<small class="sidebar-section-label">Getting Started</small>',
+      defaultStyle: true,
+    },
+    {
       type: 'doc',
       id: 'quickstart',
       label: 'Quickstart',
@@ -24,6 +29,16 @@ const sidebars = {
       label: 'Instance Images and Versions',
     },
     {
+      type: 'html',
+      value: '<small class="sidebar-section-label">Core Design</small>',
+      defaultStyle: true,
+    },
+    {
+      type: 'doc',
+      id: 'replication-failover',
+      label: 'Replication and Failover',
+    },
+    {
       type: 'doc',
       id: 'security-model',
       label: 'Security Model',
@@ -35,43 +50,18 @@ const sidebars = {
     },
     {
       type: 'doc',
-      id: 'operations',
-      label: 'Operations Runbooks',
-    },
-    {
-      type: 'doc',
       id: 'operator-upgrades',
       label: 'Operator Upgrades',
     },
     {
-      type: 'doc',
-      id: 'replication-failover',
-      label: 'Replication and Failover',
+      type: 'html',
+      value: '<small class="sidebar-section-label">Backup and Recovery</small>',
+      defaultStyle: true,
     },
     {
       type: 'doc',
       id: 'backup-recovery',
       label: 'Physical Backup and Recovery',
-    },
-    {
-      type: 'doc',
-      id: 'backup-retention-deletion',
-      label: 'Backup Retention and Deletion',
-    },
-    {
-      type: 'doc',
-      id: 'object-store',
-      label: 'Object Store Configuration',
-    },
-    {
-      type: 'doc',
-      id: 'monitoring',
-      label: 'Monitoring',
-    },
-    {
-      type: 'doc',
-      id: 'api-reference',
-      label: 'API Reference',
     },
     {
       type: 'doc',
@@ -85,8 +75,43 @@ const sidebars = {
     },
     {
       type: 'doc',
+      id: 'backup-retention-deletion',
+      label: 'Backup Retention and Deletion',
+    },
+    {
+      type: 'doc',
+      id: 'object-store',
+      label: 'Object Store Configuration',
+    },
+    {
+      type: 'html',
+      value: '<small class="sidebar-section-label">Day-2 Operations</small>',
+      defaultStyle: true,
+    },
+    {
+      type: 'doc',
+      id: 'operations',
+      label: 'Operations Runbooks',
+    },
+    {
+      type: 'doc',
+      id: 'monitoring',
+      label: 'Monitoring',
+    },
+    {
+      type: 'doc',
       id: 'troubleshooting',
       label: 'Troubleshooting',
+    },
+    {
+      type: 'html',
+      value: '<small class="sidebar-section-label">Reference</small>',
+      defaultStyle: true,
+    },
+    {
+      type: 'doc',
+      id: 'api-reference',
+      label: 'API Reference',
     },
   ],
 };

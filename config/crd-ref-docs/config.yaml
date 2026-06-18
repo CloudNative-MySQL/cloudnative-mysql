@@ -1,0 +1,6 @@
+processor:
+  useRawDocstring: true
+render:
+  kubernetesVersion: "1.35"
+source:
+  path: config/crd/bases

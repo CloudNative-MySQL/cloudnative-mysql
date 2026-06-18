@@ -145,9 +145,22 @@ DOCS_PORT ?= 1313
 docs-install: ## Install Docusaurus documentation dependencies.
 	NO_UPDATE_NOTIFIER=1 $(NPM) --prefix docs install
 
+CRD_REF_DOCS_CONFIG ?= config/crd-ref-docs/config.yaml
+
 .PHONY: docs-build
 docs-build: ## Build the Docusaurus documentation site.
 	NO_UPDATE_NOTIFIER=1 $(NPM) --prefix docs run build
+
+.PHONY: api-docs
+api-docs: ## Generate API reference documentation from CRDs.
+	go run github.com/elastic/crd-ref-docs \
+		--config $(CRD_REF_DOCS_CONFIG) \
+		--source-path api \
+		--renderer markdown \
+		--max-depth 10 \
+		--output-path docs/src/api-reference-generated.md
+	@echo "Generated docs/src/api-reference-generated.md"
+	@echo "Review the output and merge narrative sections from docs/src/api-reference.md"
 
 .PHONY: docs-serve
 docs-serve: docs-build ## Serve the built Docusaurus documentation site locally.

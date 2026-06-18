@@ -216,8 +216,7 @@ be logged or copied into status.
 
 ### Mitigated threats
 
-The per-instance identity and validating webhook (introduced in design
-[020](/020-status-instance-webhook.md)) close these attack vectors:
+The per-instance identity and validating status webhook close these attack vectors:
 
 #### Instance cannot corrupt non-primary status fields
 

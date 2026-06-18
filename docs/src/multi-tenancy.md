@@ -230,7 +230,7 @@ log paths affects every tenant on the cluster. cloudnative-mysql guards it:
 
 `require_secure_transport` is deliberately not denied: enforcing application
 TLS is a legitimate operator choice. See
-[Denied and deprecated parameters](./api-reference.md#denied-and-deprecated-parameters)
+[MySQL configuration](./api-reference.md#mysql-configuration)
 for the full lists.
 
 ## Credentials and rotation
