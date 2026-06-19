@@ -1,5 +1,7 @@
 version: 2
 
+dist: build/goreleaser
+
 project_name: kubectl-cnmysql
 
 before:
