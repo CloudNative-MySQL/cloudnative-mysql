@@ -1,0 +1,41 @@
+name: Authorize /test command
+
+on:
+  issue_comment:
+    types: [ created ]
+
+permissions: {}
+
+jobs:
+  authorize:
+    name: Authorize
+    runs-on: ubuntu-latest
+    if: github.event.issue.pull_request != ''
+    permissions:
+      actions: write
+      pull-requests: read
+    steps:
+    - name: Check authorization
+      id: check
+      run: |
+        if [[ ! "${{ github.event.comment.body }}" =~ /test ]]; then
+          echo "Comment does not contain /test — skipping"
+          exit 0
+        fi
+
+        case "${{ github.event.comment.author_association }}" in
+          OWNER|MEMBER|COLLABORATOR) ;;
+          *)
+            echo "Only maintainers can trigger e2e tests, got ${{ github.event.comment.author_association }} — skipping"
+            exit 0
+            ;;
+        esac
+
+        PR_SHA=$(gh pr view "${{ github.event.issue.number }}" -R "${{ github.repository }}" --json headRefOid -q .headRefOid)
+        echo "Authorized /test for PR #${{ github.event.issue.number }} (commit $PR_SHA)"
+
+        gh workflow run e2e.yml -R "${{ github.repository }}" \
+          -f pr_number="${{ github.event.issue.number }}" \
+          -f pr_sha="$PR_SHA"
+      env:
+        GH_TOKEN: ${{ github.token }}
