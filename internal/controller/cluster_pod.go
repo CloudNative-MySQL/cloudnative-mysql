@@ -148,7 +148,7 @@ func bootstrapArgs(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instan
 		if plan.Recovery != nil {
 			return restoreArgs(plan)
 		}
-		return initdbArgs(cluster.Spec.Bootstrap.InitDB)
+		return initdbArgs(cluster, cluster.Spec.Bootstrap.InitDB)
 	}
 	return joinArgs(cluster, plan)
 }
@@ -190,7 +190,7 @@ func restoreArgs(plan clusterPlan) []string {
 	return args
 }
 
-func initdbArgs(initdb *mysqlv1alpha1.BootstrapInitDB) []string {
+func initdbArgs(cluster *mysqlv1alpha1.Cluster, initdb *mysqlv1alpha1.BootstrapInitDB) []string {
 	args := []string{
 		"instance", "initdb",
 		"--mysqld=" + mysqldBinary,
@@ -203,6 +203,12 @@ func initdbArgs(initdb *mysqlv1alpha1.BootstrapInitDB) []string {
 		"--backup-user=" + backupUser,
 		"--control-user=" + controlUser,
 		"--metrics-user=" + metricsUser,
+	}
+	if cluster.IsGroupReplication() {
+		// Grant the replication user the Clone-plugin distributed-recovery
+		// privileges; joining members clone these credentials from the bootstrap
+		// member, so granting them here covers the whole group.
+		args = append(args, "--group-replication")
 	}
 	if initdb.Database != "" {
 		args = append(args, "--database="+initdb.Database)
