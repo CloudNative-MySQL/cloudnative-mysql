@@ -83,9 +83,10 @@ func topologyAvailabilityState(observed observedCluster) topology.AvailabilitySt
 
 func topologyObservationInput(observed observedCluster) topology.ObservationInput {
 	return topology.ObservationInput{
-		PrimaryName:      observed.PrimaryName,
-		InstanceNames:    observed.InstanceNames,
-		StatusByInstance: observed.StatusByInstance,
-		GTIDByInstance:   observed.GTIDByInstance,
+		PrimaryName:       observed.PrimaryName,
+		InstanceNames:     observed.InstanceNames,
+		StatusByInstance:  observed.StatusByInstance,
+		GTIDByInstance:    observed.GTIDByInstance,
+		ConfiguredMembers: observed.Plan.Instances,
 	}
 }

@@ -106,7 +106,7 @@ func observeGroup(input topology.ObservationInput) (*mysqlv1alpha1.GroupReplicat
 		PrimaryMember: primaryInstance,
 		Members:       members,
 		ViewID:        view.ViewID,
-		HasQuorum:     onlineCount*2 > len(view.Members),
+		HasQuorum:     onlineCount*2 > input.ConfiguredMembers,
 	}, primaryInstance
 }
 

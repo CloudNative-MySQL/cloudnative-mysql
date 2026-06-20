@@ -110,10 +110,11 @@ type FailoverResult struct {
 // ObservationInput contains the instance-manager reports used to derive
 // topology-specific cluster health.
 type ObservationInput struct {
-	PrimaryName      string
-	InstanceNames    []string
-	StatusByInstance map[string]*webserver.Status
-	GTIDByInstance   map[string]string
+	PrimaryName       string
+	InstanceNames     []string
+	StatusByInstance  map[string]*webserver.Status
+	GTIDByInstance    map[string]string
+	ConfiguredMembers int
 }
 
 // Observation is the topology-specific portion of the operator's observed

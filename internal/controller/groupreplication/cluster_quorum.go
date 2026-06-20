@@ -34,24 +34,22 @@ func quorum(members int) int {
 
 // FenceQuorumGuard returns a blocking reason if fencing all members in fenceSet
 // would leave fewer than quorum active members (ONLINE or RECOVERING). It
-// subtracts the full fenceSet from the online count so that pending fences
-// (annotations set but leaves not yet reflected in the group view) are
-// accounted for. The primary being fenced triggers a group election, so it is
-// allowed as long as quorum holds.
+// computes quorum against spec.instances (not the current view size) so that
+// the guard remains correct after members have been expelled from the group.
 func (r *Reconciler) FenceQuorumGuard(cluster *mysqlv1alpha1.Cluster, fenceSet []string) *topology.QuorumResult {
 	gr := cluster.Status.GroupReplication
+	n := int32(cluster.Spec.Instances)
+	q := quorum(int(n))
 	if gr == nil {
 		return nil
 	}
 	online := 0
-	configured := 0
-	fencing := 0
 	for _, member := range gr.Members {
-		configured++
 		if member.State == mysqlgr.MemberStateOnline || member.State == mysqlgr.MemberStateRecovering {
 			online++
 		}
 	}
+	fencing := 0
 	for _, name := range fenceSet {
 		for _, member := range gr.Members {
 			if member.Instance == name {
@@ -60,11 +58,7 @@ func (r *Reconciler) FenceQuorumGuard(cluster *mysqlv1alpha1.Cluster, fenceSet [
 			}
 		}
 	}
-	// Members not yet in the group view (e.g. still provisioning) count as
-	// absent and don't affect quorum. Subtract only the fenced members that
-	// are currently ONLINE from that count.
 	after := online - fencing
-	q := quorum(configured)
 	if after < q {
 		return &topology.QuorumResult{
 			Blocked:     true,
@@ -88,7 +82,6 @@ func (r *Reconciler) PDBMaxUnavailable(cluster *mysqlv1alpha1.Cluster) (intstr.I
 // ScaleDownQuorumGuard returns a blocking reason if removing instanceName (the
 // highest-ordinal member during scale-down) would drop the group below quorum.
 func (r *Reconciler) ScaleDownQuorumGuard(cluster *mysqlv1alpha1.Cluster, instanceName string) *topology.QuorumResult {
-	gr := cluster.Status.GroupReplication
 	n := int32(cluster.Spec.Instances)
 	if n <= 1 {
 		return &topology.QuorumResult{
@@ -98,17 +91,13 @@ func (r *Reconciler) ScaleDownQuorumGuard(cluster *mysqlv1alpha1.Cluster, instan
 			Quorum:      1,
 		}
 	}
-	if gr == nil {
-		return nil
-	}
-	configured := len(gr.Members)
 	after := n - 1
 	q := quorum(int(after))
-	if configured > 0 && after < int32(q) {
+	if after < int32(q) {
 		return &topology.QuorumResult{
 			Blocked:     true,
 			Reason:      fmt.Sprintf("scaling down to %d members would drop below quorum (%d)", after, q),
-			CurrentSize: configured,
+			CurrentSize: int(n),
 			Quorum:      q,
 		}
 	}
