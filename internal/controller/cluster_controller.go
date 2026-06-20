@@ -115,6 +115,8 @@ const (
 	phaseUpgrading      = "Upgrading"
 	phaseWaitingForUser = "WaitingForUser"
 
+	eventFailoverObserved = "FailoverObserved"
+
 	dataDir       = "/var/lib/mysql"
 	socketPath    = "/var/run/mysqld/mysqld.sock"
 	configPath    = "/etc/mysql/my.cnf"
@@ -263,10 +265,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
-	// Under Group Replication, pin the group name into status before any instance
-	// config is rendered; every member must render the same immutable name. This is
-	// a no-op for async clusters and once the name is already pinned.
-	if err, handled := r.reconcileGroupName(ctx, cluster); handled {
+	if err := r.topologyReconciler(cluster).EnsureConfigured(ctx, cluster); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -329,7 +328,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	switched, err := r.reconcileSwitchover(ctx, cluster, plan, observed)
+	switched, err := r.reconcileSwitchover(ctx, cluster, observed)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -381,7 +380,7 @@ func (r *ClusterReconciler) ensureInfrastructure(ctx context.Context, cluster *m
 	if err := r.ensureInstanceRBAC(ctx, cluster, plan); err != nil {
 		return ctrl.Result{}, err, true
 	}
-	if err := r.ensurePrimaryLease(ctx, cluster); err != nil {
+	if err := r.topologyReconciler(cluster).EnsurePrimaryLease(ctx, cluster); err != nil {
 		return ctrl.Result{}, err, true
 	}
 	if ok, result, err := r.blockOnInvalidCertificate(ctx, cluster, plan); ok {
@@ -487,7 +486,7 @@ func (r *ClusterReconciler) blockOnInvalidCertificate(ctx context.Context, clust
 // happen while the cluster is degraded, not only after it returns to Ready.
 func (r *ClusterReconciler) reconcileAvailability(ctx context.Context, cluster *mysqlv1alpha1.Cluster, observed observedCluster) {
 	log := logf.FromContext(ctx)
-	if err := r.reconcileSemiSync(ctx, cluster, observed); err != nil {
+	if err := r.topologyReconciler(cluster).ReconcileAvailability(ctx, cluster, topologyAvailabilityState(observed)); err != nil {
 		log.Info("Semi-sync self-healing pass failed, will retry", "error", err.Error())
 	}
 }

@@ -59,6 +59,13 @@ type Status struct {
 	// ExecutableHash is the SHA-256 of the running instance manager binary.
 	ExecutableHash string `json:"executableHash,omitempty"`
 
+	// InPlaceUpgrading is true while an in-place manager re-exec is in flight,
+	// and briefly after the new image adopts mysqld. The operator extends the
+	// failover grace period when the primary reports this, so a transiently
+	// unreachable control API during the re-exec window does not trigger a
+	// spurious failover.
+	InPlaceUpgrading bool `json:"inPlaceUpgrading,omitempty"`
+
 	// Archiving reports continuous binlog archiving health; nil when archiving is
 	// not enabled on this instance.
 	Archiving *ArchivingStatus `json:"archiving,omitempty"`

@@ -14,25 +14,24 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package groupreplication
 
 import (
-	"context"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
+	"github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/topology"
 )
 
-func (r *ClusterReconciler) reconcileSwitchover(
-	ctx context.Context,
-	cluster *mysqlv1alpha1.Cluster,
-	observed observedCluster,
-) (bool, error) {
-	result, err := r.topologyReconciler(cluster).ReconcileSwitchover(ctx, cluster, topologyFailoverState(observed))
-	if err != nil {
-		return result.Handled, err
-	}
-	if result.Phase != nil {
-		err = r.patchOperationPhase(ctx, cluster, observed, *result.Phase)
-	}
-	return result.Handled, err
+var _ topology.Reconciler = (*Reconciler)(nil)
+
+// Reconciler owns Group Replication topology-specific reconciliation.
+type Reconciler struct {
+	client client.Client
+	scheme *runtime.Scheme
+}
+
+// NewReconciler creates a Group Replication topology reconciler.
+func NewReconciler(kubeClient client.Client, scheme *runtime.Scheme) *Reconciler {
+	return &Reconciler{client: kubeClient, scheme: scheme}
 }

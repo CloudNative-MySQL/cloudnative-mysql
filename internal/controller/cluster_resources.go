@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
+	"github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/topology"
 	mysqlconfig "github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/config"
 )
 
@@ -118,7 +119,7 @@ func randomPassword() (string, error) {
 }
 
 func (r *ClusterReconciler) ensureConfigMap(ctx context.Context, cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instancePlan) error {
-	rendered, err := renderMyCnf(cluster, plan, inst)
+	rendered, err := r.renderMyCnf(cluster, plan, inst)
 	if err != nil {
 		return err
 	}
@@ -134,15 +135,7 @@ func (r *ClusterReconciler) ensureConfigMap(ctx context.Context, cluster *mysqlv
 	return err
 }
 
-func renderMyCnf(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instancePlan) (string, error) {
-	semiSync := mysqlconfig.SemiSync{}
-	if cluster.Spec.MySQL.SemiSync != nil {
-		semiSync.Enabled = cluster.Spec.MySQL.SemiSync.Enabled
-		semiSync.WaitForReplicaCount = initialSemiSyncWaitForReplicaCount(cluster)
-		if cluster.Spec.MySQL.SemiSync.TimeoutMillis != nil {
-			semiSync.TimeoutMillis = int(*cluster.Spec.MySQL.SemiSync.TimeoutMillis)
-		}
-	}
+func (r *ClusterReconciler) renderMyCnf(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instancePlan) (string, error) {
 	role := mysqlconfig.RolePrimary
 	if !inst.IsPrimary {
 		role = mysqlconfig.RoleReplica
@@ -167,30 +160,13 @@ func renderMyCnf(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instance
 			Key:  serverTLSPath + "/tls.key",
 		},
 		UserParameters: cluster.Spec.MySQL.Parameters,
-		SemiSync:       semiSync,
 		Archiving:      archivingConfig(cluster),
 	}
-	// Under Group Replication, render the group_replication_* block instead of
-	// the async/semi-sync settings. The group name must already be pinned in
-	// status; the GR topology path requeues until it is, so config is never
-	// rendered with an empty group name.
-	if gr, ok := groupReplicationConfig(cluster, plan, inst); ok {
-		cfg.TopologyMode = mysqlconfig.TopologyGroupReplication
-		cfg.GroupReplication = gr
-		cfg.SemiSync = mysqlconfig.SemiSync{}
-	}
+	r.topologyReconciler(cluster).ConfigureServer(cluster, topology.ServerConfigInput{
+		InstanceName: inst.Name,
+		MemberNames:  plan.instanceNames(cluster),
+	}, cfg)
 	return cfg.Render()
-}
-
-func initialSemiSyncWaitForReplicaCount(cluster *mysqlv1alpha1.Cluster) int {
-	count := cluster.Spec.MinSyncReplicas
-	if count <= 0 {
-		return 0
-	}
-	if cluster.SemiSyncDurabilityPreferred() {
-		return 1
-	}
-	return count
 }
 
 // archivingConfig resolves the my.cnf durability/RPO settings for continuous
@@ -312,7 +288,7 @@ func servicePorts() []corev1.ServicePort {
 func (r *ClusterReconciler) ensurePod(ctx context.Context, cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instancePlan) error {
 	labels := labelsFor(cluster, inst.Name, roleOf(inst))
 	spec := r.podSpec(cluster, plan, inst)
-	annotations, err := podAnnotations(cluster, plan, inst, labels, spec)
+	annotations, err := r.podAnnotations(cluster, plan, inst, labels, spec)
 	if err != nil {
 		return err
 	}
@@ -358,8 +334,8 @@ func (r *ClusterReconciler) ensurePod(ctx context.Context, cluster *mysqlv1alpha
 	return nil
 }
 
-func podAnnotations(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instancePlan, labels map[string]string, spec corev1.PodSpec) (map[string]string, error) {
-	config, err := renderMyCnf(cluster, plan, inst)
+func (r *ClusterReconciler) podAnnotations(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst instancePlan, labels map[string]string, spec corev1.PodSpec) (map[string]string, error) {
+	config, err := r.renderMyCnf(cluster, plan, inst)
 	if err != nil {
 		return nil, err
 	}
@@ -376,7 +352,7 @@ func podAnnotations(cluster *mysqlv1alpha1.Cluster, plan clusterPlan, inst insta
 	stablePlan := plan
 	stablePlan.PrimaryName = instanceName(cluster, 1)
 	stableInst := stablePlan.instanceFor(cluster, inst.Ordinal)
-	stableConfig, err := renderMyCnf(cluster, stablePlan, stableInst)
+	stableConfig, err := r.renderMyCnf(cluster, stablePlan, stableInst)
 	if err != nil {
 		return nil, err
 	}

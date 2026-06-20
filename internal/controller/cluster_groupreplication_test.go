@@ -24,6 +24,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
+	controllergr "github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/groupreplication"
+	"github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/topology"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/groupreplication"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/webserver"
 )
@@ -36,6 +38,11 @@ func grCluster(group *mysqlv1alpha1.GroupReplicationStatus) *mysqlv1alpha1.Clust
 	}
 	cluster.Status.GroupReplication = group
 	return cluster
+}
+
+func observeGroupReplicationForTest(observed observedCluster) (*mysqlv1alpha1.GroupReplicationStatus, string) {
+	result := controllergr.NewReconciler(nil, nil).Observe(topologyObservationInput(observed))
+	return result.GroupReplication, result.PrimaryName
 }
 
 // onlineMemberStatus is a control-API status for a member ONLINE in the group.
@@ -57,6 +64,25 @@ func onlineMemberStatus(instance, uuid, role string) *webserver.Status {
 	return st
 }
 
+func groupViewStatus(instance, memberID, primaryID string, members []webserver.GroupReplicationMember) *webserver.Status {
+	role := groupreplication.MemberRoleSecondary
+	if memberID == primaryID {
+		role = groupreplication.MemberRolePrimary
+	}
+	return &webserver.Status{
+		InstanceName: instance,
+		IsReady:      true,
+		Role:         webserver.RoleReplica,
+		GroupReplication: &webserver.GroupReplicationMemberStatus{
+			MemberID: memberID,
+			State:    groupreplication.MemberStateOnline,
+			Role:     role,
+			ViewID:   "view-2",
+			Members:  members,
+		},
+	}
+}
+
 func TestObserveGroupReplicationAggregatesPrimary(t *testing.T) {
 	t.Parallel()
 	observed := observedCluster{
@@ -65,7 +91,7 @@ func TestObserveGroupReplicationAggregatesPrimary(t *testing.T) {
 			testPrimary: onlineMemberStatus(testPrimary, "uuid-1", groupreplication.MemberRolePrimary),
 		},
 	}
-	status, primary := observeGroupReplication(observed)
+	status, primary := observeGroupReplicationForTest(observed)
 	if primary != testPrimary {
 		t.Fatalf("primary = %q, want %q", primary, testPrimary)
 	}
@@ -92,9 +118,65 @@ func TestObserveGroupReplicationNilUntilOnline(t *testing.T) {
 		InstanceNames:    []string{testPrimary},
 		StatusByInstance: map[string]*webserver.Status{testPrimary: recovering},
 	}
-	status, primary := observeGroupReplication(observed)
+	status, primary := observeGroupReplicationForTest(observed)
 	if status != nil || primary != "" {
 		t.Fatalf("expected (nil, \"\") before any member is ONLINE, got (%+v, %q)", status, primary)
+	}
+}
+
+func TestObserveGroupReplicationRequiresMajorityPrimaryVerdict(t *testing.T) {
+	t.Parallel()
+	members := []webserver.GroupReplicationMember{
+		{MemberID: "uuid-1", State: groupreplication.MemberStateUnreachable, Role: groupreplication.MemberRoleSecondary},
+		{MemberID: "uuid-2", State: groupreplication.MemberStateOnline, Role: groupreplication.MemberRolePrimary},
+		{MemberID: "uuid-3", State: groupreplication.MemberStateOnline, Role: groupreplication.MemberRoleSecondary},
+	}
+	observed := observedCluster{
+		InstanceNames: []string{testPrimary, testReplica2, testReplica3},
+		StatusByInstance: map[string]*webserver.Status{
+			testReplica2: groupViewStatus(testReplica2, "uuid-2", "uuid-2", members),
+			testReplica3: groupViewStatus(testReplica3, "uuid-3", "uuid-2", members),
+		},
+	}
+
+	status, primary := observeGroupReplicationForTest(observed)
+	if primary != testReplica2 {
+		t.Fatalf("primary = %q, want majority-observed %q", primary, testReplica2)
+	}
+	if status == nil || status.PrimaryMember != testReplica2 || !status.HasQuorum {
+		t.Fatalf("status = %+v, want quorate group with primary %q", status, testReplica2)
+	}
+}
+
+func TestObserveGroupReplicationRejectsSplitPrimaryVerdict(t *testing.T) {
+	t.Parallel()
+	viewFor := func(primaryID string) []webserver.GroupReplicationMember {
+		members := []webserver.GroupReplicationMember{
+			{MemberID: "uuid-1", State: groupreplication.MemberStateUnreachable, Role: groupreplication.MemberRoleSecondary},
+			{MemberID: "uuid-2", State: groupreplication.MemberStateOnline, Role: groupreplication.MemberRoleSecondary},
+			{MemberID: "uuid-3", State: groupreplication.MemberStateOnline, Role: groupreplication.MemberRoleSecondary},
+		}
+		for i := range members {
+			if members[i].MemberID == primaryID {
+				members[i].Role = groupreplication.MemberRolePrimary
+			}
+		}
+		return members
+	}
+	observed := observedCluster{
+		InstanceNames: []string{testPrimary, testReplica2, testReplica3},
+		StatusByInstance: map[string]*webserver.Status{
+			testReplica2: groupViewStatus(testReplica2, "uuid-2", "uuid-2", viewFor("uuid-2")),
+			testReplica3: groupViewStatus(testReplica3, "uuid-3", "uuid-3", viewFor("uuid-3")),
+		},
+	}
+
+	status, primary := observeGroupReplicationForTest(observed)
+	if primary != "" {
+		t.Fatalf("primary = %q, want empty without a majority verdict", primary)
+	}
+	if status == nil || status.PrimaryMember != "" {
+		t.Fatalf("status = %+v, want group view without an authoritative primary", status)
 	}
 }
 
@@ -107,7 +189,9 @@ func TestMergeGroupReplicationSetsCurrentPrimaryAndBootstrapped(t *testing.T) {
 			HasQuorum:     true,
 		},
 	}
-	mergeGroupReplicationStatus(cluster, observed)
+	controllergr.NewReconciler(nil, nil).MergeStatus(cluster, topology.Observation{
+		GroupReplication: observed.GroupReplication,
+	})
 	if cluster.Status.CurrentPrimary != testPrimary {
 		t.Fatalf("currentPrimary = %q, want %q", cluster.Status.CurrentPrimary, testPrimary)
 	}
@@ -127,7 +211,7 @@ func TestMergeGroupReplicationKeepsBootstrappedSticky(t *testing.T) {
 		GroupName:    "group-uuid",
 		Bootstrapped: true,
 	})
-	mergeGroupReplicationStatus(cluster, observedCluster{GroupReplication: nil})
+	controllergr.NewReconciler(nil, nil).MergeStatus(cluster, topology.Observation{})
 	if !cluster.Status.GroupReplication.Bootstrapped {
 		t.Fatal("bootstrapped is monotonic and must never be cleared")
 	}
@@ -146,7 +230,7 @@ func TestEnsureGroupNameGeneratesAndIsSticky(t *testing.T) {
 			Build(),
 		Scheme: scheme,
 	}
-	if err := r.ensureGroupName(ctx, cluster); err != nil {
+	if err := r.topologyReconciler(cluster).EnsureConfigured(ctx, cluster); err != nil {
 		t.Fatal(err)
 	}
 	name := cluster.PinnedGroupName()
@@ -154,7 +238,7 @@ func TestEnsureGroupNameGeneratesAndIsSticky(t *testing.T) {
 		t.Fatal("a group name should have been generated and pinned")
 	}
 	// Idempotent: a second call must not change the pinned name.
-	if err := r.ensureGroupName(ctx, cluster); err != nil {
+	if err := r.topologyReconciler(cluster).EnsureConfigured(ctx, cluster); err != nil {
 		t.Fatal(err)
 	}
 	if cluster.PinnedGroupName() != name {
@@ -178,7 +262,7 @@ func TestEnsureGroupNameRespectsUserPinned(t *testing.T) {
 			Build(),
 		Scheme: scheme,
 	}
-	if err := r.ensureGroupName(ctx, cluster); err != nil {
+	if err := r.topologyReconciler(cluster).EnsureConfigured(ctx, cluster); err != nil {
 		t.Fatal(err)
 	}
 	if got := cluster.PinnedGroupName(); got != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" {
@@ -199,7 +283,7 @@ func TestEnsureGroupNameNoOpForAsync(t *testing.T) {
 			Build(),
 		Scheme: scheme,
 	}
-	if err := r.ensureGroupName(ctx, cluster); err != nil {
+	if err := r.topologyReconciler(cluster).EnsureConfigured(ctx, cluster); err != nil {
 		t.Fatal(err)
 	}
 	if cluster.Status.GroupReplication != nil {
@@ -214,7 +298,7 @@ func TestRenderMyCnfGroupReplicationBlock(t *testing.T) {
 	plan.Instances = 1
 	inst := plan.instanceFor(cluster, 1)
 
-	rendered, err := renderMyCnf(cluster, plan, inst)
+	rendered, err := (&ClusterReconciler{}).renderMyCnf(cluster, plan, inst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +325,7 @@ func TestRunArgsGroupReplicationFlag(t *testing.T) {
 	cluster := grCluster(&mysqlv1alpha1.GroupReplicationStatus{GroupName: "g"})
 	plan := testPlan()
 	inst := plan.instanceFor(cluster, 1)
-	args := runArgs(cluster, plan, inst)
+	args := (&ClusterReconciler{}).runArgs(cluster, plan, inst)
 	found := false
 	for _, a := range args {
 		if a == "--group-replication" {
@@ -252,7 +336,7 @@ func TestRunArgsGroupReplicationFlag(t *testing.T) {
 		t.Fatalf("runArgs for a GR cluster must include --group-replication, got %v", args)
 	}
 	// Async cluster must not carry the flag.
-	asyncArgs := runArgs(baseCluster(), plan, inst)
+	asyncArgs := (&ClusterReconciler{}).runArgs(baseCluster(), plan, inst)
 	for _, a := range asyncArgs {
 		if a == "--group-replication" {
 			t.Fatal("async cluster must not carry --group-replication")

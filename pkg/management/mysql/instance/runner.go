@@ -303,6 +303,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 		if err := sup.AdoptProcess(adoptPID); err != nil {
 			return err
 		}
+		MarkRecentlyReExecd()
 	} else {
 		log.Info("Starting mysqld", "binary", opts.MysqldPath, "pidFile", opts.PIDFile, "fifo", fifoPath)
 		if err := sup.Start(ctx); err != nil {

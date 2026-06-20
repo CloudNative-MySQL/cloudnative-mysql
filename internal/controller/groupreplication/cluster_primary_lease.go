@@ -14,25 +14,26 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package groupreplication
 
 import (
 	"context"
 
 	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
+	"github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/topology"
 )
 
-func (r *ClusterReconciler) reconcileSwitchover(
-	ctx context.Context,
-	cluster *mysqlv1alpha1.Cluster,
-	observed observedCluster,
-) (bool, error) {
-	result, err := r.topologyReconciler(cluster).ReconcileSwitchover(ctx, cluster, topologyFailoverState(observed))
-	if err != nil {
-		return result.Handled, err
-	}
-	if result.Phase != nil {
-		err = r.patchOperationPhase(ctx, cluster, observed, *result.Phase)
-	}
-	return result.Handled, err
+// EnsurePrimaryLease is a no-op because GR uses group quorum for split-brain
+// safety instead of the async primary Lease.
+func (r *Reconciler) EnsurePrimaryLease(context.Context, *mysqlv1alpha1.Cluster) error {
+	return nil
+}
+
+// PrimaryLeaseStatus is always unheld because GR does not use the async Lease.
+func (r *Reconciler) PrimaryLeaseStatus(
+	context.Context,
+	*mysqlv1alpha1.Cluster,
+	string,
+) (topology.PrimaryLeaseStatus, error) {
+	return topology.PrimaryLeaseStatus{}, nil
 }
