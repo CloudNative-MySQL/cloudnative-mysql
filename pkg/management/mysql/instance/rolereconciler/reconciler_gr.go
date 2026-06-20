@@ -48,29 +48,49 @@ func (r *Reconciler) reconcileGroupRole(
 	me := r.InstanceName
 
 	// status.GroupReplication is non-nil once the plugin is running and the member
-	// appears in replication_group_members (any state). Its absence means GR has
-	// not been started on this member yet.
+	// appears in replication_group_members. A member that is in the group (ONLINE
+	// or RECOVERING) is left to the group; only a member that is not in the group
+	// (no GR row, or an OFFLINE row left behind after a failed/aborted start) needs
+	// to (re)join.
 	gr := status.GroupReplication
 	if gr != nil {
-		if gr.State == groupreplication.MemberStateOnline {
+		switch gr.State {
+		case groupreplication.MemberStateOnline:
 			// Steady state: a running, online member. Nothing to do; the operator
 			// observes and reflects. Re-check periodically without a Cluster event.
 			return ctrl.Result{RequeueAfter: steadyRequeue}, nil
+		case groupreplication.MemberStateRecovering:
+			// Distributed recovery in progress (binlog catch-up or a clone). Wait.
+			log.Info("Group member is recovering; waiting", "instance", me, "state", gr.State)
+			return ctrl.Result{RequeueAfter: waitRequeue}, nil
+		case groupreplication.MemberStateError:
+			// The member could not join (e.g. errant transactions). Guarded recovery
+			// (re-clone via the reinit annotation) is a later phase; surface and wait.
+			log.Info("Group member is in ERROR; manual recovery required", "instance", me)
+			return ctrl.Result{RequeueAfter: waitRequeue}, nil
 		}
-		// Started but not yet ONLINE (RECOVERING/OFFLINE/ERROR). Let GR converge or
-		// auto-rejoin; just re-check shortly. Guarded recovery for stuck members is
-		// a later phase.
-		log.Info("Group member not yet ONLINE; waiting", "instance", me, "state", gr.State)
-		return ctrl.Result{RequeueAfter: waitRequeue}, nil
+		// OFFLINE: GR is not running on this member (a stale row from a previous
+		// start that left the group). Fall through and (re)join below.
+		log.Info("Group member is OFFLINE; (re)joining the group", "instance", me)
 	}
 
-	// GR is not running locally (fresh start, or restarted with start_on_boot=OFF).
+	// GR is not running locally (fresh start, restarted with start_on_boot=OFF, or
+	// OFFLINE after leaving). Bootstrap the group only on the designated member.
 	if r.shouldBootstrap(cluster) {
 		log.Info("Bootstrapping the group as the designated bootstrap member", "instance", me)
 		if err := r.Local.BootstrapGroup(ctx); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: waitRequeue}, nil
+	}
+
+	// Prepare for distributed recovery, then join. PrepareGroupJoin clears the
+	// initdb-authored GTIDs and forces a clone for a fresh member (so it is
+	// provisioned wholesale from a donor), and sets the recovery-channel account;
+	// it authenticates with the replication account (X509, no password) over the
+	// rendered recovery SSL material. It is idempotent and safe on every attempt.
+	if err := r.Local.PrepareGroupJoin(ctx, r.SourceTemplate.User, r.SourceTemplate.Password); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Join the existing group. For a single-member group whose only member has

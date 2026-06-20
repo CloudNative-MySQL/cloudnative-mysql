@@ -87,6 +87,107 @@ func TestGroupReplicationStatusNilWhenNotConfigured(t *testing.T) {
 	}
 }
 
+func TestReadyzGroupReplicationOnlineIsReady(t *testing.T) {
+	t.Parallel()
+	c, mock := newController(t, nil)
+	c.EnableGroupReplication()
+
+	mock.ExpectPing()
+	expectGroupViewQuery(mock, "uuid-1", "gr-1.default.svc", 3306,
+		groupreplication.MemberStateOnline, groupreplication.MemberRolePrimary)
+	mock.ExpectQuery("SELECT @@global.server_uuid").
+		WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow("uuid-1"))
+
+	if err := c.Readyz(context.Background()); err != nil {
+		t.Fatalf("an ONLINE member must be ready, got %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadyzGroupReplicationNotOnlineIsNotReady(t *testing.T) {
+	t.Parallel()
+	c, mock := newController(t, nil)
+	c.EnableGroupReplication()
+
+	mock.ExpectPing()
+	expectGroupViewQuery(mock, "uuid-1", "gr-1.default.svc", 3306,
+		groupreplication.MemberStateRecovering, groupreplication.MemberRoleSecondary)
+	mock.ExpectQuery("SELECT @@global.server_uuid").
+		WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow("uuid-1"))
+
+	if err := c.Readyz(context.Background()); err == nil {
+		t.Fatal("a RECOVERING member must not be ready")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadyzGroupReplicationNotJoinedIsNotReady(t *testing.T) {
+	t.Parallel()
+	c, mock := newController(t, nil)
+	c.EnableGroupReplication()
+
+	mock.ExpectPing()
+	// No rows: the member has not joined the group yet.
+	expectGroupViewQuery(mock, "", "", 0, "", "")
+
+	if err := c.Readyz(context.Background()); err == nil {
+		t.Fatal("a member not yet in the group must not be ready")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPrepareGroupJoinFreshMemberResetsAndForcesClone(t *testing.T) {
+	t.Parallel()
+	c, mock := newController(t, nil)
+	c.EnableGroupReplication()
+
+	// A fresh member: gtid_executed holds only its own server_uuid (from initdb).
+	mock.ExpectQuery("SELECT @@global.server_uuid").
+		WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow("uuid-self"))
+	mock.ExpectQuery("SELECT @@GLOBAL.gtid_executed").
+		WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow("uuid-self:1-5"))
+	// Clear local GTIDs, force a clone, then set the recovery account.
+	mock.ExpectExec("RESET MASTER").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("group_replication_clone_threshold = 1").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CHANGE REPLICATION SOURCE TO SOURCE_USER='repl'.*group_replication_recovery").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	if err := c.PrepareGroupJoin(context.Background(), "repl", ""); err != nil {
+		t.Fatalf("PrepareGroupJoin: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPrepareGroupJoinClonedMemberOnlySetsChannel(t *testing.T) {
+	t.Parallel()
+	c, mock := newController(t, nil)
+	c.EnableGroupReplication()
+
+	// A member that already cloned a donor: gtid_executed holds the group's GTIDs
+	// (another server_uuid) and none of its own, so it must not reset or re-clone.
+	mock.ExpectQuery("SELECT @@global.server_uuid").
+		WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow("uuid-self"))
+	mock.ExpectQuery("SELECT @@GLOBAL.gtid_executed").
+		WillReturnRows(sqlmock.NewRows([]string{"v"}).AddRow("uuid-donor:1-100"))
+	mock.ExpectExec("CHANGE REPLICATION SOURCE TO SOURCE_USER='repl'.*group_replication_recovery").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	if err := c.PrepareGroupJoin(context.Background(), "repl", ""); err != nil {
+		t.Fatalf("PrepareGroupJoin: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStatusOmitsGroupReplicationForAsync(t *testing.T) {
 	t.Parallel()
 	// GR not enabled (async cluster): Status must not issue any GR query and must

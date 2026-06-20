@@ -61,11 +61,25 @@ func (o *InitOptions) applyDefaults() {
 	}
 }
 
-// IsInitialized reports whether the data directory already contains a MySQL
-// system schema.
-func IsInitialized(dataDir string) bool {
+// bootstrapSentinel is created atomically after a complete bootstrap so the
+// next run can reliably distinguish a fully initialized directory from one
+// where initialization was interrupted partway.
+const bootstrapSentinel = ".cloudnative-mysql-bootstrapped"
+
+// hasSystemSchema reports whether the data directory contains the mysql system
+// schema laid down by --initialize, regardless of whether bootstrap completed.
+func hasSystemSchema(dataDir string) bool {
 	info, err := os.Stat(filepath.Join(dataDir, "mysql"))
 	return err == nil && info.IsDir()
+}
+
+// IsInitialized reports whether the data directory is fully initialised
+// (bootstrap completed). It checks for a sentinel file written only after a
+// successful bootstrap, so a directory with system tables but no sentinel
+// (interrupted initialization) is considered uninitialised.
+func IsInitialized(dataDir string) bool {
+	_, err := os.Stat(filepath.Join(dataDir, bootstrapSentinel))
+	return err == nil
 }
 
 // Initialize initialises a fresh data directory and applies the bootstrap
@@ -102,6 +116,17 @@ func Initialize(ctx context.Context, opts InitOptions) error {
 		return nil
 	}
 
+	// If system tables exist but the sentinel is missing, a previous
+	// initialization was interrupted after --initialize-insecure but before
+	// (or during) bootstrap cleanup. Wipe the partial state so we re-run
+	// both --initialize and bootstrap from scratch.
+	if hasSystemSchema(opts.DataDir) {
+		log.Info("Data directory has system tables without bootstrap sentinel; cleaning up partial state")
+		if err := purgeDataDir(opts.DataDir); err != nil {
+			log.Error(err, "Failed to clean partial data directory")
+		}
+	}
+
 	if err := os.MkdirAll(opts.DataDir, 0o750); err != nil {
 		return fmt.Errorf("creating data dir: %w", err)
 	}
@@ -109,10 +134,9 @@ func Initialize(ctx context.Context, opts InitOptions) error {
 
 	if err := opts.runInitialize(ctx); err != nil {
 		// A failed --initialize leaves a half-written data directory (auto.cnf,
-		// the mysql/ system-schema dir, tablespaces). IsInitialized only checks
-		// for the mysql/ dir, so leaving the partial state behind would make the
-		// next attempt skip initialization and start mysqld against a corrupt
-		// directory. Wipe it so a retry starts from a clean slate.
+		// the mysql/ system-schema dir, tablespaces). Without cleanup a retry
+		// would find the partial state, attempt --initialize over it (which
+		// fails), and wedge. Wipe it so a retry starts from a clean slate.
 		if cleanErr := purgeDataDir(opts.DataDir); cleanErr != nil {
 			log.Error(cleanErr, "Failed to clean partial data directory after a failed initialize")
 		}
@@ -120,7 +144,20 @@ func Initialize(ctx context.Context, opts InitOptions) error {
 	}
 
 	if err := opts.runBootstrap(ctx); err != nil {
+		// --initialize already laid down the mysql/ system schema, so
+		// hasSystemSchema would now report the directory as initialized and the
+		// next attempt would skip straight past bootstrap, leaving a
+		// half-initialized server (system tables present, but no operator
+		// accounts and a passwordless root). Wipe the partial state so a retry
+		// re-runs both --initialize and the bootstrap SQL.
+		if cleanErr := purgeDataDir(opts.DataDir); cleanErr != nil {
+			log.Error(cleanErr, "Failed to clean partial data directory after a failed bootstrap")
+		}
 		return err
+	}
+
+	if err := os.WriteFile(filepath.Join(opts.DataDir, bootstrapSentinel), nil, 0o600); err != nil {
+		return fmt.Errorf("marking data directory as bootstrapped: %w", err)
 	}
 	log.Info("Completed data directory initialization")
 	return nil
@@ -217,6 +254,15 @@ func (o *InitOptions) runBootstrap(ctx context.Context) error {
 		"--datadir="+o.DataDir,
 		"--socket="+o.Socket,
 		"--skip-networking",
+		// The bootstrap SQL creates accounts and sets the root password, so the
+		// temporary server must be writable. A replica's rendered config carries
+		// read_only/super_read_only=ON (and a Group Replication member always
+		// renders as a replica until the group elects it primary), which would make
+		// every bootstrap statement fail with ER_OPTION_PREVENTS_STATEMENT. Override
+		// both off on the command line so the temporary server is writable
+		// regardless of the member's eventual role.
+		"--read-only=OFF",
+		"--super-read-only=OFF",
 	)
 
 	stdout, stderr := newProcessLogWriters(log.WithName("temporary-mysqld"))

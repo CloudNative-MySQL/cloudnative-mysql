@@ -19,7 +19,13 @@ package groupreplication
 import (
 	"fmt"
 	"strings"
+
+	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/version"
 )
+
+// RecoveryChannelName is the dedicated replication channel Group Replication uses
+// for distributed recovery (binlog catch-up and Clone-plugin snapshots).
+const RecoveryChannelName = "group_replication_recovery"
 
 // Member states reported by performance_schema.replication_group_members.
 const (
@@ -60,6 +66,36 @@ func BootstrapGroupStatements() []string {
 		"START GROUP_REPLICATION",
 		"SET GLOBAL group_replication_bootstrap_group = OFF",
 	}
+}
+
+// ConfigureRecoveryChannelStatement sets the credentials a joining member uses
+// to authenticate to a donor on the distributed-recovery channel, before
+// START GROUP_REPLICATION. The channel's TLS material comes from the
+// group_replication_recovery_ssl_* server settings, so only the account is set
+// here; an X509-authenticated account needs no password. The verb follows the
+// server's replica/source terminology (CHANGE REPLICATION SOURCE TO on 8.0.23+,
+// CHANGE MASTER TO below).
+func ConfigureRecoveryChannelStatement(v version.Version, user, password string) string {
+	verb, prefix := "CHANGE MASTER TO", "MASTER_"
+	if v.UsesReplicaTerminology() {
+		verb, prefix = "CHANGE REPLICATION SOURCE TO", "SOURCE_"
+	}
+	clauses := []string{prefix + "USER=" + quote(user)}
+	if password != "" {
+		clauses = append(clauses, prefix+"PASSWORD="+quote(password))
+	}
+	return fmt.Sprintf("%s %s FOR CHANNEL %s", verb, strings.Join(clauses, ", "), quote(RecoveryChannelName))
+}
+
+// ForceCloneStatement lowers group_replication_clone_threshold to 1 so the next
+// START GROUP_REPLICATION provisions the member by cloning a donor wholesale,
+// rather than replaying the donor's binlogs onto the joiner. A freshly
+// initialised joiner already holds the cluster's accounts, so binlog recovery
+// would conflict (duplicate CREATE USER); a full clone replaces the joiner's data
+// cleanly. The runtime value is reset to the configured default by the implicit
+// restart the clone performs.
+func ForceCloneStatement() string {
+	return "SET GLOBAL group_replication_clone_threshold = 1"
 }
 
 // SetAsPrimaryStatement returns the UDF call that performs a planned switchover

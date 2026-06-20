@@ -52,12 +52,14 @@ type fakeLocal struct {
 	unfenceCalled  bool
 
 	// Group Replication fakes.
-	groupView      groupreplication.GroupView
-	groupViewErr   error
-	grStarted      bool
-	grStartErr     error
-	grBootstrapped bool
-	grBootstrapErr error
+	groupView         groupreplication.GroupView
+	groupViewErr      error
+	grStarted         bool
+	grStartErr        error
+	grBootstrapped    bool
+	grBootstrapErr    error
+	grRecoveryUser    string
+	grRecoveryChanSet bool
 }
 
 func (f *fakeLocal) Status(context.Context) (*webserver.Status, error) { return f.status, f.statusErr }
@@ -76,6 +78,11 @@ func (f *fakeLocal) Fence(context.Context) error    { f.fenceCalled = true; retu
 func (f *fakeLocal) Unfence(context.Context) error  { f.unfenceCalled = true; return nil }
 func (f *fakeLocal) GroupView(context.Context) (groupreplication.GroupView, error) {
 	return f.groupView, f.groupViewErr
+}
+func (f *fakeLocal) PrepareGroupJoin(_ context.Context, user, _ string) error {
+	f.grRecoveryChanSet = true
+	f.grRecoveryUser = user
+	return nil
 }
 func (f *fakeLocal) StartGroupReplication(context.Context) error {
 	f.grStarted = true

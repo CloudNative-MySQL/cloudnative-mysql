@@ -197,6 +197,14 @@ func (c *Controller) Readyz(ctx context.Context) error {
 	if err := c.conn.PingContext(ctx); err != nil {
 		return err
 	}
+	// Under Group Replication readiness is bound to the member's group state: a
+	// member serves consistent traffic only when ONLINE. This is the GR-health ⇄
+	// readiness bridge — the kubelet turns each ONLINE/not-ONLINE transition into a
+	// Pod Ready condition change the operator already watches via Owns(&Pod{}), so
+	// member join/recover/expel becomes event-driven without operator polling.
+	if c.groupReplication {
+		return c.groupReplicationReady(ctx)
+	}
 	state, err := c.repl.ReplicaState(ctx)
 	if err != nil {
 		return err
@@ -209,6 +217,35 @@ func (c *Controller) Readyz(ctx context.Context) error {
 			state.IORunning, state.SQLRunning, state.LastError)
 	}
 	return nil
+}
+
+// groupReplicationReady reports readiness for a Group Replication member: the
+// local member must appear in performance_schema.replication_group_members in the
+// ONLINE state. A member that has not yet joined (no row for its server_uuid), is
+// still RECOVERING, or is OFFLINE/ERROR/UNREACHABLE is not ready, so the kubelet
+// keeps it out of the routing Services until the group accepts it.
+func (c *Controller) groupReplicationReady(ctx context.Context) error {
+	view, err := c.gr.ReadGroupView(ctx)
+	if err != nil {
+		return err
+	}
+	if !view.Configured {
+		return errors.New("instance has not joined the group yet")
+	}
+	uuid, err := c.serverUUID(ctx)
+	if err != nil {
+		return err
+	}
+	for _, m := range view.Members {
+		if m.MemberID != uuid {
+			continue
+		}
+		if m.State == groupreplication.MemberStateOnline {
+			return nil
+		}
+		return fmt.Errorf("group member is not ONLINE (state=%s)", m.State)
+	}
+	return errors.New("instance has not joined the group yet")
 }
 
 // Status assembles the full instance status from the server.
@@ -347,6 +384,53 @@ func (c *Controller) groupName(ctx context.Context) (string, error) {
 // role strategy's steady-state check.
 func (c *Controller) GroupView(ctx context.Context) (groupreplication.GroupView, error) {
 	return c.gr.ReadGroupView(ctx)
+}
+
+// PrepareGroupJoin readies a member to join the group via distributed recovery,
+// before StartGroupReplication. It:
+//
+//   - Clears the GTIDs initdb authored locally (a fresh member only) so the group
+//     does not see them as errant transactions, and forces a full clone so the
+//     member is provisioned wholesale from a donor rather than by replaying the
+//     donor's binlogs onto a server that already holds the cluster's accounts.
+//   - Sets the distributed-recovery account on the group_replication_recovery
+//     channel. The channel's TLS comes from the rendered
+//     group_replication_recovery_ssl_* settings, so an X509 account needs no
+//     password (empty password).
+//
+// A member that already holds group data (it cloned a donor and restarted, or is
+// rejoining) is left to recover incrementally: its GTIDs are not self-authored,
+// so neither the reset nor the forced clone runs.
+func (c *Controller) PrepareGroupJoin(ctx context.Context, recoveryUser, password string) error {
+	fresh, err := c.hasSelfAuthoredGTIDs(ctx)
+	if err != nil {
+		return err
+	}
+	if fresh {
+		if err := c.repl.ResetBinaryLogs(ctx); err != nil {
+			return fmt.Errorf("clearing local GTIDs before group join: %w", err)
+		}
+		if err := c.gr.ForceClone(ctx); err != nil {
+			return fmt.Errorf("forcing clone for group join: %w", err)
+		}
+	}
+	return c.gr.ConfigureRecoveryChannel(ctx, recoveryUser, password)
+}
+
+// hasSelfAuthoredGTIDs reports whether gtid_executed contains transactions this
+// server itself authored (its own server_uuid). A freshly initialised member
+// has only such GTIDs (from initdb); once it has cloned a donor, gtid_executed
+// holds the group's GTIDs (other server_uuids) and none of its own.
+func (c *Controller) hasSelfAuthoredGTIDs(ctx context.Context) (bool, error) {
+	uuid, err := c.serverUUID(ctx)
+	if err != nil {
+		return false, err
+	}
+	gtids, err := c.repl.GTIDExecuted(ctx)
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(gtids, uuid), nil
 }
 
 // StartGroupReplication joins an existing group via distributed recovery. It

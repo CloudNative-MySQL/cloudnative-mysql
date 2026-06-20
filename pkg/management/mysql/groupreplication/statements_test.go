@@ -16,7 +16,48 @@ limitations under the License.
 
 package groupreplication
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/version"
+)
+
+func mustVersion(t *testing.T, s string) version.Version {
+	t.Helper()
+	v, err := version.Parse(s)
+	if err != nil {
+		t.Fatalf("parsing version %q: %v", s, err)
+	}
+	return v
+}
+
+func TestConfigureRecoveryChannelStatementX509OmitsPassword(t *testing.T) {
+	// An X509 account authenticates with its client cert; no password clause, and
+	// the channel name is always group_replication_recovery.
+	got := ConfigureRecoveryChannelStatement(mustVersion(t, "8.0.36"), "repl", "")
+	want := "CHANGE REPLICATION SOURCE TO SOURCE_USER='repl' FOR CHANNEL 'group_replication_recovery'"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestConfigureRecoveryChannelStatementIncludesPassword(t *testing.T) {
+	got := ConfigureRecoveryChannelStatement(mustVersion(t, "8.0.36"), "repl", "s3cret")
+	want := "CHANGE REPLICATION SOURCE TO SOURCE_USER='repl', SOURCE_PASSWORD='s3cret'" +
+		" FOR CHANNEL 'group_replication_recovery'"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestConfigureRecoveryChannelStatementLegacyTerminology(t *testing.T) {
+	// Below 8.0.23 the server only understands CHANGE MASTER TO / MASTER_USER.
+	got := ConfigureRecoveryChannelStatement(mustVersion(t, "8.0.22"), "repl", "")
+	want := "CHANGE MASTER TO MASTER_USER='repl' FOR CHANNEL 'group_replication_recovery'"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
 
 func TestBootstrapGroupStatementsTurnFlagOffAfterStart(t *testing.T) {
 	stmts := BootstrapGroupStatements()
