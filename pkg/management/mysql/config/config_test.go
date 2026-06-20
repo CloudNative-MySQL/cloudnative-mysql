@@ -126,7 +126,9 @@ func TestStripGroupReplicationRemovesGRBlock(t *testing.T) {
 		}
 	}
 	// Non-GR settings, comments and the section header must survive.
-	for _, kept := range []string{"[mysqld]", "server-id = 1", "gtid_mode = ON", "max_connections = 100", "# --- user-provided ---"} {
+	for _, kept := range []string{
+		"[mysqld]", "server-id = 1", "gtid_mode = ON", "max_connections = 100", "# --- user-provided ---",
+	} {
 		if !strings.Contains(out, kept) {
 			t.Errorf("expected %q to be kept, got:\n%s", kept, out)
 		}
@@ -150,16 +152,17 @@ func TestStrippedConfigInitializesWhereFullConfigWouldAbort(t *testing.T) {
 	}
 
 	stripped := StripGroupReplication(full)
-	for _, line := range strings.Split(stripped, "\n") {
+	for line := range strings.SplitSeq(stripped, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "[") {
 			continue
 		}
 		key := trimmed
-		if i := strings.IndexByte(trimmed, '='); i >= 0 {
-			key = trimmed[:i]
+		if before, _, ok := strings.Cut(trimmed, "="); ok {
+			key = before
 		}
-		if IsDeniedKey(key) && (strings.HasPrefix(normalizeKey(key), "group_replication_") || normalizeKey(key) == "plugin_load_add") {
+		if IsDeniedKey(key) && (strings.HasPrefix(normalizeKey(key), "group_replication_") ||
+			normalizeKey(key) == "plugin_load_add") {
 			t.Errorf("stripped config still carries GR key %q", key)
 		}
 	}

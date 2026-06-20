@@ -276,8 +276,8 @@ func StripGroupReplication(content string) string {
 		trimmed := strings.TrimSpace(line)
 		if trimmed != "" && !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, "[") {
 			key := trimmed
-			if i := strings.IndexByte(trimmed, '='); i >= 0 {
-				key = trimmed[:i]
+			if before, _, ok := strings.Cut(trimmed, "="); ok {
+				key = before
 			}
 			if isGroupReplicationManagedKey(normalizeKey(key)) {
 				continue
