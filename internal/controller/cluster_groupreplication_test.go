@@ -217,6 +217,38 @@ func TestMergeGroupReplicationKeepsBootstrappedSticky(t *testing.T) {
 	}
 }
 
+func TestMergeGroupReplicationClampsObservedMaxOnScaleDown(t *testing.T) {
+	t.Parallel()
+	// A 5-member group that has been scaled down to 3: the sticky ObservedViewMax
+	// (5, the largest view ever seen) must be clamped to spec.Instances so the
+	// quorum denominator tracks the smaller group. Otherwise losing one of the
+	// three would falsely read as quorum-lost (2*2=4 <= 5).
+	cluster := grCluster(&mysqlv1alpha1.GroupReplicationStatus{
+		GroupName:         "group-uuid",
+		Bootstrapped:      true,
+		ObservedViewMax:   5,
+		ObservedOnlineMax: 5,
+	})
+	cluster.Spec.Instances = 3
+	online := func(i string) mysqlv1alpha1.GroupMember {
+		return mysqlv1alpha1.GroupMember{Instance: i, State: groupreplication.MemberStateOnline, Role: groupreplication.MemberRoleSecondary}
+	}
+	controllergr.NewReconciler(nil, nil).MergeStatus(cluster, topology.Observation{
+		GroupReplication: &mysqlv1alpha1.GroupReplicationStatus{
+			Members:           []mysqlv1alpha1.GroupMember{online("demo-1"), online("demo-2"), online("demo-3")},
+			ObservedViewMax:   3,
+			ObservedOnlineMax: 3,
+		},
+	})
+	gr := cluster.Status.GroupReplication
+	if gr.ObservedViewMax != 3 {
+		t.Fatalf("ObservedViewMax = %d, want clamped to 3", gr.ObservedViewMax)
+	}
+	if !gr.HasQuorum {
+		t.Fatal("a full 3-member group must be quorate after scale-down clamp")
+	}
+}
+
 func TestEnsureGroupNameGeneratesAndIsSticky(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
