@@ -167,7 +167,7 @@ func (r *ClusterReconciler) scaleDownReplicas(ctx context.Context, cluster *mysq
 // in-Pod reconciler to fence the instance (stop mysqld for async, STOP
 // GROUP_REPLICATION for GR). The routing reconciler picks it up and sets
 // routable=false on the next pass.
-func (r *ClusterReconciler) stampFencingAnnotation(ctx context.Context, cluster *mysqlv1alpha1.Cluster, pod *corev1.Pod) error {
+func (r *ClusterReconciler) stampFencingAnnotation(ctx context.Context, _ *mysqlv1alpha1.Cluster, pod *corev1.Pod) error {
 	if pod.Annotations[fencingAnnotation] == routableTrue {
 		return nil
 	}

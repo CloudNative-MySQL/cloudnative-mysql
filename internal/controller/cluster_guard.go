@@ -68,10 +68,10 @@ func (r *ClusterReconciler) reconcilePDB(ctx context.Context, cluster *mysqlv1al
 	if cluster.IsGroupReplication() {
 		if !pdbEnabled || singleInstance {
 			_ = r.reconcileOnePDB(ctx, cluster, groupPDBName(cluster), false, nil)
-			_ = r.deleteAsyncSplitPDBs(ctx, cluster)
+			r.deleteAsyncSplitPDBs(ctx, cluster)
 			return nil
 		}
-		_ = r.deleteAsyncSplitPDBs(ctx, cluster)
+		r.deleteAsyncSplitPDBs(ctx, cluster)
 		primaryMax, _ := r.topologyReconciler(cluster).PDBMaxUnavailable(cluster)
 		wantGroup := pdbEnabled && !maintenance
 		return r.reconcileOnePDB(ctx, cluster, groupPDBName(cluster), wantGroup, func() *policyv1.PodDisruptionBudget {
@@ -98,10 +98,9 @@ func (r *ClusterReconciler) reconcilePDB(ctx context.Context, cluster *mysqlv1al
 
 // deleteAsyncSplitPDBs removes the async-style primary and replica PDBs, ensuring
 // a switch from async to GR (or vice versa) cleans up the old topology's PDBs.
-func (r *ClusterReconciler) deleteAsyncSplitPDBs(ctx context.Context, cluster *mysqlv1alpha1.Cluster) error {
+func (r *ClusterReconciler) deleteAsyncSplitPDBs(ctx context.Context, cluster *mysqlv1alpha1.Cluster) {
 	_ = r.reconcileOnePDB(ctx, cluster, primaryPDBName(cluster), false, nil)
 	_ = r.reconcileOnePDB(ctx, cluster, replicaPDBName(cluster), false, nil)
-	return nil
 }
 
 // reconcileOnePDB creates/updates the named PDB when want is true, or deletes it
@@ -262,7 +261,6 @@ func removeString(ss []string, s string) []string {
 func (r *ClusterReconciler) handleQuorumRecovery(
 	ctx context.Context,
 	cluster *mysqlv1alpha1.Cluster,
-	observed observedCluster,
 ) (ctrl.Result, error, bool) {
 	if !cluster.IsGroupReplication() {
 		return ctrl.Result{}, nil, false

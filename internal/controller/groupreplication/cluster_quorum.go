@@ -113,13 +113,9 @@ func (r *Reconciler) ComputeForceQuorumRecovery(cluster *mysqlv1alpha1.Cluster) 
 		return nil
 	}
 	online := make([]mysqlv1alpha1.GroupMember, 0, len(gr.Members))
-	addresses := make([]string, 0, len(gr.Members))
 	for _, m := range gr.Members {
 		if m.State == mysqlgr.MemberStateOnline {
 			online = append(online, m)
-		}
-		if m.Instance != "" {
-			addresses = append(addresses, fmt.Sprintf("%s:%d", m.Instance, 33061))
 		}
 	}
 	if len(online) == 0 {
