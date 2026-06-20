@@ -469,15 +469,27 @@ func Run(ctx context.Context, opts RunOptions) error {
 		}
 	}()
 
-	// mysqld exit signals the supervisor's wait channel. A crash is fatal to the
-	// run loop (PID 1 exits, the kubelet restarts the Pod). An intentional stop
-	// while the instance is fenced is not: the manager stays alive with mysqld
-	// down and restarts it once the instance is unfenced.
+	// mysqld exit signals the supervisor's wait channel. A crash (non-zero exit
+	// while unfenced) is fatal to the run loop (PID 1 exits, the kubelet restarts
+	// the Pod). An intentional stop while the instance is fenced is not: the
+	// manager stays alive with mysqld down and restarts it once the instance is
+	// unfenced. A clean exit (zero) while unfenced is the clone restart case:
+	// MySQL 8.0's CLONE INSTANCE shuts down the server after a successful clone,
+	// expecting to be restarted by the supervisor; we restart mysqld in-place
+	// instead of propagating the exit and restarting the Pod.
 	mysqldExit := make(chan error, 1)
 	go func() {
 		for {
 			err := sup.Wait()
 			if !fence.IsFenced() {
+				if err == nil {
+					log.Info("mysqld exited cleanly after clone; restarting")
+					if serr := sup.Start(ctx); serr != nil {
+						mysqldExit <- fmt.Errorf("restarting mysqld after clone: %w", serr)
+						return
+					}
+					continue
+				}
 				mysqldExit <- err
 				return
 			}
