@@ -71,6 +71,9 @@ type LocalInstance interface {
 	// BootstrapGroup runs the exactly-once group-creation sequence on the
 	// designated bootstrap member.
 	BootstrapGroup(ctx context.Context) error
+	// StopGroupReplication stops the member's Group Replication, making it
+	// leave the group while keeping mysqld alive (the GR fencing primitive).
+	StopGroupReplication(ctx context.Context) error
 }
 
 const (
