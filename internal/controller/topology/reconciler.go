@@ -61,13 +61,14 @@ type AvailabilityState struct {
 
 // FailoverInstance contains the async failover policy inputs for one instance.
 type FailoverInstance struct {
-	Ready      bool
-	Primary    bool
-	Replica    bool
-	Role       string
-	IORunning  bool
-	SQLRunning bool
-	GTID       string
+	Ready            bool
+	Primary          bool
+	Replica          bool
+	Role             string
+	IORunning        bool
+	SQLRunning       bool
+	GTID             string
+	InPlaceUpgrading bool
 }
 
 // FailoverState is the topology-neutral observed state used to choose whether

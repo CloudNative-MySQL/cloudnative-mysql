@@ -260,12 +260,13 @@ func (c *Controller) Status(ctx context.Context) (*webserver.Status, error) {
 	}
 
 	status := &webserver.Status{
-		InstanceName:  c.name,
-		Version:       c.versionStr,
-		Role:          c.role(replicaState),
-		ReadOnly:      roState.ReadOnly,
-		SuperReadOnly: roState.SuperReadOnly,
-		IsReady:       c.Readyz(ctx) == nil,
+		InstanceName:     c.name,
+		Version:          c.versionStr,
+		Role:             c.role(replicaState),
+		ReadOnly:         roState.ReadOnly,
+		SuperReadOnly:    roState.SuperReadOnly,
+		IsReady:          c.Readyz(ctx) == nil,
+		InPlaceUpgrading: IsInPlaceUpgrading(),
 	}
 
 	if hash, err := executablehash.Get(); err == nil {

@@ -71,6 +71,11 @@ func (r *Reconciler) ReconcileFailover(
 			delay = max(delay, 30*time.Second)
 		}
 	}
+	if primary, ok := observed.Instances[observed.PrimaryName]; ok && primary.InPlaceUpgrading {
+		logf.FromContext(ctx).Info("Primary is undergoing an in-place manager upgrade; extending failover grace",
+			"instance", observed.PrimaryName)
+		delay = max(delay, 30*time.Second)
+	}
 	if remaining := delay - time.Since(failingSince); remaining > 0 {
 		reason := fmt.Sprintf("Primary %s unreachable; waiting %s before failover", observed.PrimaryName, remaining.Round(time.Second))
 		return phaseResult(remaining, phaseDegraded, reason), nil

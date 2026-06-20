@@ -44,11 +44,12 @@ func topologyFailoverState(observed observedCluster) topology.FailoverState {
 			continue
 		}
 		instance := topology.FailoverInstance{
-			Ready:   status.IsReady,
-			Primary: status.Role == webserver.RolePrimary,
-			Replica: status.Role == webserver.RoleReplica,
-			Role:    string(status.Role),
-			GTID:    observed.GTIDByInstance[name],
+			Ready:            status.IsReady,
+			Primary:          status.Role == webserver.RolePrimary,
+			Replica:          status.Role == webserver.RoleReplica,
+			Role:             string(status.Role),
+			GTID:             observed.GTIDByInstance[name],
+			InPlaceUpgrading: status.InPlaceUpgrading,
 		}
 		if status.Replication != nil {
 			instance.IORunning = status.Replication.IORunning
