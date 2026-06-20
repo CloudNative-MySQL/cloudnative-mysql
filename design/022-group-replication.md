@@ -753,9 +753,15 @@ tests. GR stays behind `mode: groupReplication` throughout.
   an old group, guaranteed by a fresh pinned group name plus
   `group_replication_start_on_boot=OFF`. Backups offload to an ONLINE secondary
   via the existing prefer-standby source selection),
+  monitoring (**done** — the operator publishes each GR cluster's authoritative
+  `status.groupReplication` on its existing `/metrics` endpoint via a collector on
+  the controller-runtime registry: `cnmysql_cluster_gr_has_quorum`,
+  `_gr_bootstrapped`, `_gr_view_size` (the quorum denominator), and
+  `_gr_members{state}` counts per member state; reads the cached client at scrape
+  time, so no extra reconcile or in-Pod query, and async clusters emit nothing),
   kubectl plugin GR commands + the
   documentation contract and safety affordances (structured `--help`/runbooks,
-  consequence summaries, confirmations, command safety matrix), monitoring, docs.
+  consequence summaries, confirmations, command safety matrix), docs.
   Full E2E matrix + async regression suite.
   (GR-specific consequence text — quorum impact, `group recover` — ships with the
   phase that first introduces each command, e.g. `fence` quorum-guard in M-GR.6.)
