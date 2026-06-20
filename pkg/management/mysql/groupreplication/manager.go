@@ -47,6 +47,14 @@ func (m *Manager) exec(ctx context.Context, stmt string) error {
 	return nil
 }
 
+// ConfigureRecoveryChannel sets the account a joining member authenticates with
+// on the group_replication_recovery channel, before Start triggers distributed
+// recovery. It is idempotent (re-running it just re-sets the same credentials)
+// and must be run while the member is not in the group.
+func (m *Manager) ConfigureRecoveryChannel(ctx context.Context, user, password string) error {
+	return m.exec(ctx, ConfigureRecoveryChannelStatement(m.version, user, password))
+}
+
 // Start starts the local member, joining an existing group via distributed
 // recovery. It never bootstraps; see Bootstrap.
 func (m *Manager) Start(ctx context.Context) error {

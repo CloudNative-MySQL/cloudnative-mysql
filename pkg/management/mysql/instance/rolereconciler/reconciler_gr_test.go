@@ -127,6 +127,9 @@ func TestGroupRoleNonTargetMemberJoins(t *testing.T) {
 	if local.grBootstrapped {
 		t.Fatal("non-target member must never bootstrap")
 	}
+	if !local.grRecoveryChanSet {
+		t.Fatal("a joining member must configure the recovery channel before START")
+	}
 	if !local.grStarted {
 		t.Fatal("non-target member should join via START GROUP_REPLICATION")
 	}

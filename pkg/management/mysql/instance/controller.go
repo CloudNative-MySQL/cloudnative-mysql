@@ -197,6 +197,14 @@ func (c *Controller) Readyz(ctx context.Context) error {
 	if err := c.conn.PingContext(ctx); err != nil {
 		return err
 	}
+	// Under Group Replication readiness is bound to the member's group state: a
+	// member serves consistent traffic only when ONLINE. This is the GR-health ⇄
+	// readiness bridge — the kubelet turns each ONLINE/not-ONLINE transition into a
+	// Pod Ready condition change the operator already watches via Owns(&Pod{}), so
+	// member join/recover/expel becomes event-driven without operator polling.
+	if c.groupReplication {
+		return c.groupReplicationReady(ctx)
+	}
 	state, err := c.repl.ReplicaState(ctx)
 	if err != nil {
 		return err
@@ -209,6 +217,35 @@ func (c *Controller) Readyz(ctx context.Context) error {
 			state.IORunning, state.SQLRunning, state.LastError)
 	}
 	return nil
+}
+
+// groupReplicationReady reports readiness for a Group Replication member: the
+// local member must appear in performance_schema.replication_group_members in the
+// ONLINE state. A member that has not yet joined (no row for its server_uuid), is
+// still RECOVERING, or is OFFLINE/ERROR/UNREACHABLE is not ready, so the kubelet
+// keeps it out of the routing Services until the group accepts it.
+func (c *Controller) groupReplicationReady(ctx context.Context) error {
+	view, err := c.gr.ReadGroupView(ctx)
+	if err != nil {
+		return err
+	}
+	if !view.Configured {
+		return errors.New("instance has not joined the group yet")
+	}
+	uuid, err := c.serverUUID(ctx)
+	if err != nil {
+		return err
+	}
+	for _, m := range view.Members {
+		if m.MemberID != uuid {
+			continue
+		}
+		if m.State == groupreplication.MemberStateOnline {
+			return nil
+		}
+		return fmt.Errorf("group member is not ONLINE (state=%s)", m.State)
+	}
+	return errors.New("instance has not joined the group yet")
 }
 
 // Status assembles the full instance status from the server.
@@ -347,6 +384,15 @@ func (c *Controller) groupName(ctx context.Context) (string, error) {
 // role strategy's steady-state check.
 func (c *Controller) GroupView(ctx context.Context) (groupreplication.GroupView, error) {
 	return c.gr.ReadGroupView(ctx)
+}
+
+// ConfigureGroupRecoveryChannel sets the account a joining member uses for
+// distributed recovery on the group_replication_recovery channel, before
+// StartGroupReplication. The recovery channel's TLS comes from the rendered
+// group_replication_recovery_ssl_* settings, so an X509 account needs no
+// password (empty password).
+func (c *Controller) ConfigureGroupRecoveryChannel(ctx context.Context, recoveryUser, password string) error {
+	return c.gr.ConfigureRecoveryChannel(ctx, recoveryUser, password)
 }
 
 // StartGroupReplication joins an existing group via distributed recovery. It

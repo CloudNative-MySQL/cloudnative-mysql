@@ -62,6 +62,9 @@ type LocalInstance interface {
 	// GroupView reports the local member's view of the Group Replication group.
 	// Used only by the group role strategy.
 	GroupView(ctx context.Context) (groupreplication.GroupView, error)
+	// ConfigureGroupRecoveryChannel sets the distributed-recovery account on the
+	// group_replication_recovery channel before joining (StartGroupReplication).
+	ConfigureGroupRecoveryChannel(ctx context.Context, user, password string) error
 	// StartGroupReplication joins an existing group (no bootstrap).
 	StartGroupReplication(ctx context.Context) error
 	// BootstrapGroup runs the exactly-once group-creation sequence on the

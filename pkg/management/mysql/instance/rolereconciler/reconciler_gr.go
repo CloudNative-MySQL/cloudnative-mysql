@@ -73,6 +73,14 @@ func (r *Reconciler) reconcileGroupRole(
 		return ctrl.Result{RequeueAfter: waitRequeue}, nil
 	}
 
+	// Configure the distributed-recovery account on the group_replication_recovery
+	// channel before joining: a joining member authenticates to its donor with the
+	// replication account (X509, so no password) and the recovery SSL material the
+	// config rendered. This is idempotent and safe to re-run on every join attempt.
+	if err := r.Local.ConfigureGroupRecoveryChannel(ctx, r.SourceTemplate.User, r.SourceTemplate.Password); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// Join the existing group. For a single-member group whose only member has
 	// fully restarted (total outage), the group view is gone and this start cannot
 	// re-form the group; that re-bootstrap is a guarded, opt-in recovery handled in
