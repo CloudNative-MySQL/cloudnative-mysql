@@ -6,6 +6,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: authorize-e2e-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
 jobs:
   authorize:
     name: Authorize
@@ -14,6 +18,7 @@ jobs:
     permissions:
       actions: write
       pull-requests: read
+      statuses: write
     steps:
     - name: Check authorization
       id: check
@@ -33,9 +38,49 @@ jobs:
 
         PR_SHA=$(gh pr view "${{ github.event.issue.number }}" -R "${{ github.repository }}" --json headRefOid -q .headRefOid)
         echo "Authorized /test for PR #${{ github.event.issue.number }} (commit $PR_SHA)"
+        echo "pr_sha=$PR_SHA" >> "$GITHUB_OUTPUT"
+      env:
+        GH_TOKEN: ${{ github.token }}
 
+    - name: Clone the code
+      if: steps.check.outputs.pr_sha != ''
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+
+    - name: Register pending statuses
+      if: steps.check.outputs.pr_sha != ''
+      run: |
+        PR_SHA="${{ steps.check.outputs.pr_sha }}"
+        RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+        matrix_json=$(python3 .github/e2e-matrix-generator.py -m workflow_dispatch 2>/dev/null | sed -n 's/^kindMatrix=//p')
+
+        if [[ -z "$matrix_json" || "$matrix_json" == "null" ]]; then
+          echo "No matrix entries generated — nothing to register"
+          exit 0
+        fi
+
+        echo "Generated matrix: $matrix_json"
+
+        echo "$matrix_json" | jq -c '.include[]' | while IFS= read -r job; do
+          id=$(echo "$job" | jq -r '.id')
+          echo "Registering pending status: E2E / $id"
+          gh api "repos/${{ github.repository }}/statuses/$PR_SHA" \
+            -f state="pending" \
+            -f context="E2E / $id" \
+            -f description="Awaiting runner" \
+            -f target_url="$RUN_URL" \
+            --silent
+        done
+      env:
+        GH_TOKEN: ${{ github.token }}
+
+    - name: Dispatch e2e workflow
+      if: steps.check.outputs.pr_sha != ''
+      run: |
         gh workflow run e2e.yml -R "${{ github.repository }}" \
           -f pr_number="${{ github.event.issue.number }}" \
-          -f pr_sha="$PR_SHA"
+          -f pr_sha="${{ steps.check.outputs.pr_sha }}"
       env:
         GH_TOKEN: ${{ github.token }}
