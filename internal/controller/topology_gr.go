@@ -60,10 +60,18 @@ func (groupReplicationTopology) ReconcileFailover(
 
 // ReconcileSwitchover performs a planned primary change via the group's
 // group_replication_set_as_primary UDF. The operator validates the target is an
-// ONLINE SECONDARY, invokes the UDF on any ONLINE member, and then lets
-// ObserveTopology mirror the new PRIMARY into currentPrimary on the next
-// reconcile. It is bounded by spec.maxSwitchoverDelay exactly like the async
-// path.
+// ONLINE SECONDARY, invokes the UDF on any ONLINE member, and then lets the
+// terminal status write mirror the new PRIMARY into currentPrimary once the group
+// reports the handover complete. It is bounded by spec.maxSwitchoverDelay exactly
+// like the async path.
+//
+// Completion is detected from the group's own elected primary (observed.PrimaryName),
+// never from status.currentPrimary: under GR the operator is the sole writer of
+// currentPrimary and only mirrors it after the fact, so the stale status value
+// would never advance while this step keeps taking over the reconcile. Comparing
+// against the live group view lets the step yield (handled=false) the moment the
+// group has promoted the target, so the terminal patchStatus persists it and
+// repoints -rw.
 func (groupReplicationTopology) ReconcileSwitchover(
 	ctx context.Context,
 	r *ClusterReconciler,
@@ -72,28 +80,30 @@ func (groupReplicationTopology) ReconcileSwitchover(
 	observed observedCluster,
 ) (bool, error) {
 	target := cluster.Status.TargetPrimary
-	current := cluster.Status.CurrentPrimary
-	if target == "" || target == current {
+	if target == "" {
 		return false, nil
 	}
-	if current == "" {
-		// Bootstrap: observation will set currentPrimary once the first member is
-		// ONLINE PRIMARY; until then targetPrimary is just the bootstrap designee.
+	// The group's elected primary, not the possibly-stale status.currentPrimary, is
+	// the source of truth for whether the switchover still has work to do.
+	groupPrimary := observed.PrimaryName
+	if target == groupPrimary {
+		// The group has the target as PRIMARY (handover done, or it never moved):
+		// nothing to drive. Yield so the terminal status write mirrors it into
+		// currentPrimary and repoints routing, and stop the switchover stopwatch.
+		if err := r.clearSwitchoverDeadline(ctx, cluster); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	if groupPrimary == "" {
+		// Bootstrap: no elected primary observed yet. Observation will set
+		// currentPrimary once the first member is ONLINE PRIMARY; until then
+		// targetPrimary is just the bootstrap designee.
 		return false, nil
 	}
 
 	if err := validateGRSwitchoverTarget(observed, target); err != nil {
-		return true, r.patchStatus(ctx, cluster, observedCluster{
-			Phase:          phaseBlocked,
-			PhaseReason:    err.Error(),
-			Ready:          false,
-			Progressing:    false,
-			Plan:           plan,
-			PrimaryName:    observed.PrimaryName,
-			InstanceNames:  observed.InstanceNames,
-			ReadyInstances: observed.ReadyInstances,
-			GTIDByInstance: observed.GTIDByInstance,
-		})
+		return true, r.patchGRStatus(ctx, cluster, plan, observed, phaseBlocked, err.Error(), false, false)
 	}
 
 	startedAt, err := r.ensureSwitchoverStarted(ctx, cluster)
@@ -102,7 +112,10 @@ func (groupReplicationTopology) ReconcileSwitchover(
 	}
 	maxDelay := time.Duration(cluster.Spec.MaxSwitchoverDelay) * time.Second
 	if maxDelay > 0 && time.Since(startedAt) > maxDelay {
-		return r.abortSwitchover(ctx, cluster, current, target)
+		// Give up without promoting anyone back: the group never left a consistent
+		// state, so restoring the target to the group's actual primary (and never
+		// re-issuing set_as_primary toward it) is the whole revert.
+		return r.abortSwitchover(ctx, cluster, groupPrimary, target)
 	}
 
 	targetStatus := observed.StatusByInstance[target]
@@ -111,28 +124,19 @@ func (groupReplicationTopology) ReconcileSwitchover(
 		return true, fmt.Errorf("target %s has no group member UUID", target)
 	}
 
-	caller := pickOnlineMember(observed, current, target)
+	caller := pickOnlineMember(observed, groupPrimary, target)
 	if caller == "" {
 		return true, fmt.Errorf("no ONLINE group member available to invoke set_as_primary")
 	}
 
 	logf.FromContext(ctx).Info("Requesting group switchover",
-		"from", current, "to", target, "memberUUID", memberUUID, "caller", caller)
+		"from", groupPrimary, "to", target, "memberUUID", memberUUID, "caller", caller)
 	if err := r.instanceControlClient().SetAsPrimary(ctx, cluster, caller, memberUUID); err != nil {
 		return true, fmt.Errorf("set_as_primary via %s: %w", caller, err)
 	}
 
-	return true, r.patchStatus(ctx, cluster, observedCluster{
-		Phase:          phaseSwitchover,
-		PhaseReason:    fmt.Sprintf("Switching group primary to %s", target),
-		Ready:          false,
-		Progressing:    true,
-		Plan:           plan,
-		PrimaryName:    observed.PrimaryName,
-		InstanceNames:  observed.InstanceNames,
-		ReadyInstances: observed.ReadyInstances,
-		GTIDByInstance: observed.GTIDByInstance,
-	})
+	return true, r.patchGRStatus(ctx, cluster, plan, observed, phaseSwitchover,
+		fmt.Sprintf("Switching group primary to %s", target), false, true)
 }
 
 func (groupReplicationTopology) ReconcileAvailability(

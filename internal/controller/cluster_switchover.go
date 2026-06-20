@@ -59,6 +59,19 @@ func (r *ClusterReconciler) ensureSwitchoverStarted(ctx context.Context, cluster
 	return now, nil
 }
 
+// clearSwitchoverDeadline resets the switchover stopwatch once the change has
+// settled, so a later switchover starts its maxSwitchoverDelay budget fresh. It
+// is a no-op when no deadline is stamped, avoiding a status write on every steady
+// reconcile.
+func (r *ClusterReconciler) clearSwitchoverDeadline(ctx context.Context, cluster *mysqlv1alpha1.Cluster) error {
+	if cluster.Status.TargetPrimaryTimestamp == "" {
+		return nil
+	}
+	return r.updateStatus(ctx, cluster, func(s *mysqlv1alpha1.ClusterStatus) {
+		s.TargetPrimaryTimestamp = ""
+	})
+}
+
 // abortSwitchover cancels a planned switchover whose target failed to be
 // promoted within spec.maxSwitchoverDelay, restoring the original primary as the
 // target.
@@ -86,6 +99,13 @@ func (r *ClusterReconciler) abortSwitchover(ctx context.Context, cluster *mysqlv
 // itself; under GR it is mirrored from the group's elected PRIMARY.
 func (r *ClusterReconciler) reconcileRoleLabels(ctx context.Context, cluster *mysqlv1alpha1.Cluster, observed observedCluster) error {
 	primary := cluster.Status.CurrentPrimary
+	// Under GR the group's elected primary (observed live this reconcile) is
+	// authoritative and may already be ahead of the operator-mirrored
+	// currentPrimary mid-switchover, so route to it immediately rather than lagging
+	// a reconcile behind the status mirror.
+	if cluster.IsGroupReplication() && observed.PrimaryName != "" {
+		primary = observed.PrimaryName
+	}
 	if primary == "" {
 		primary = observed.PrimaryName
 	}

@@ -184,6 +184,35 @@ func mergeGroupReplicationStatus(cluster *mysqlv1alpha1.Cluster, observed observ
 	cluster.Status.GroupReplication = merged
 }
 
+// patchGRStatus writes an in-flight GR operation phase (e.g. Switchover, Blocked)
+// while keeping the observed group view (members, quorum, view id, elected
+// primary) fresh on the status. Unlike a bare observedCluster literal it carries
+// GroupReplication and StatusByInstance through to mergeGroupReplicationStatus, so
+// an interim status write neither blanks the members list nor drops the mirror of
+// currentPrimary.
+func (r *ClusterReconciler) patchGRStatus(
+	ctx context.Context,
+	cluster *mysqlv1alpha1.Cluster,
+	plan clusterPlan,
+	observed observedCluster,
+	phase, reason string,
+	ready, progressing bool,
+) error {
+	return r.patchStatus(ctx, cluster, observedCluster{
+		Phase:            phase,
+		PhaseReason:      reason,
+		Ready:            ready,
+		Progressing:      progressing,
+		Plan:             plan,
+		PrimaryName:      observed.PrimaryName,
+		InstanceNames:    observed.InstanceNames,
+		ReadyInstances:   observed.ReadyInstances,
+		GTIDByInstance:   observed.GTIDByInstance,
+		StatusByInstance: observed.StatusByInstance,
+		GroupReplication: observed.GroupReplication,
+	})
+}
+
 // groupHasOnlineDonor reports whether the observed group has quorum and at least
 // one ONLINE member to recover a joining member from. Until the operator has
 // observed an ONLINE member (GroupReplication is nil before then) no donor is
