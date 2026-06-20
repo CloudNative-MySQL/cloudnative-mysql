@@ -386,13 +386,51 @@ func (c *Controller) GroupView(ctx context.Context) (groupreplication.GroupView,
 	return c.gr.ReadGroupView(ctx)
 }
 
-// ConfigureGroupRecoveryChannel sets the account a joining member uses for
-// distributed recovery on the group_replication_recovery channel, before
-// StartGroupReplication. The recovery channel's TLS comes from the rendered
-// group_replication_recovery_ssl_* settings, so an X509 account needs no
-// password (empty password).
-func (c *Controller) ConfigureGroupRecoveryChannel(ctx context.Context, recoveryUser, password string) error {
+// PrepareGroupJoin readies a member to join the group via distributed recovery,
+// before StartGroupReplication. It:
+//
+//   - Clears the GTIDs initdb authored locally (a fresh member only) so the group
+//     does not see them as errant transactions, and forces a full clone so the
+//     member is provisioned wholesale from a donor rather than by replaying the
+//     donor's binlogs onto a server that already holds the cluster's accounts.
+//   - Sets the distributed-recovery account on the group_replication_recovery
+//     channel. The channel's TLS comes from the rendered
+//     group_replication_recovery_ssl_* settings, so an X509 account needs no
+//     password (empty password).
+//
+// A member that already holds group data (it cloned a donor and restarted, or is
+// rejoining) is left to recover incrementally: its GTIDs are not self-authored,
+// so neither the reset nor the forced clone runs.
+func (c *Controller) PrepareGroupJoin(ctx context.Context, recoveryUser, password string) error {
+	fresh, err := c.hasSelfAuthoredGTIDs(ctx)
+	if err != nil {
+		return err
+	}
+	if fresh {
+		if err := c.repl.ResetBinaryLogs(ctx); err != nil {
+			return fmt.Errorf("clearing local GTIDs before group join: %w", err)
+		}
+		if err := c.gr.ForceClone(ctx); err != nil {
+			return fmt.Errorf("forcing clone for group join: %w", err)
+		}
+	}
 	return c.gr.ConfigureRecoveryChannel(ctx, recoveryUser, password)
+}
+
+// hasSelfAuthoredGTIDs reports whether gtid_executed contains transactions this
+// server itself authored (its own server_uuid). A freshly initialised member
+// has only such GTIDs (from initdb); once it has cloned a donor, gtid_executed
+// holds the group's GTIDs (other server_uuids) and none of its own.
+func (c *Controller) hasSelfAuthoredGTIDs(ctx context.Context) (bool, error) {
+	uuid, err := c.serverUUID(ctx)
+	if err != nil {
+		return false, err
+	}
+	gtids, err := c.repl.GTIDExecuted(ctx)
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(gtids, uuid), nil
 }
 
 // StartGroupReplication joins an existing group via distributed recovery. It

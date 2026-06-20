@@ -79,7 +79,7 @@ func (f *fakeLocal) Unfence(context.Context) error  { f.unfenceCalled = true; re
 func (f *fakeLocal) GroupView(context.Context) (groupreplication.GroupView, error) {
 	return f.groupView, f.groupViewErr
 }
-func (f *fakeLocal) ConfigureGroupRecoveryChannel(_ context.Context, user, _ string) error {
+func (f *fakeLocal) PrepareGroupJoin(_ context.Context, user, _ string) error {
 	f.grRecoveryChanSet = true
 	f.grRecoveryUser = user
 	return nil

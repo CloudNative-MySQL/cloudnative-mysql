@@ -87,6 +87,17 @@ func ConfigureRecoveryChannelStatement(v version.Version, user, password string)
 	return fmt.Sprintf("%s %s FOR CHANNEL %s", verb, strings.Join(clauses, ", "), quote(RecoveryChannelName))
 }
 
+// ForceCloneStatement lowers group_replication_clone_threshold to 1 so the next
+// START GROUP_REPLICATION provisions the member by cloning a donor wholesale,
+// rather than replaying the donor's binlogs onto the joiner. A freshly
+// initialised joiner already holds the cluster's accounts, so binlog recovery
+// would conflict (duplicate CREATE USER); a full clone replaces the joiner's data
+// cleanly. The runtime value is reset to the configured default by the implicit
+// restart the clone performs.
+func ForceCloneStatement() string {
+	return "SET GLOBAL group_replication_clone_threshold = 1"
+}
+
 // SetAsPrimaryStatement returns the UDF call that performs a planned switchover
 // to the member with the given server_uuid, the GR way to change the primary
 // without an election. memberUUID must be a server_uuid already in the group.
