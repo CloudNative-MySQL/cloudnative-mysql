@@ -34,6 +34,7 @@ import (
 
 	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/topology"
+	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/groupreplication"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/webserver"
 )
 
@@ -560,10 +561,9 @@ func conditionStatus(ok bool) metav1.ConditionStatus {
 }
 
 // isQuorumLost reports whether a Group Replication cluster has lost quorum:
-// the group was previously bootstrapped but the majority of ONLINE members
-// is gone. Two cases: (a) HasQuorum is explicitly false from a member's view,
-// or (b) all members are unreachable and no member reports a group view, but
-// the sticky bootstrapped flag shows the group was once established.
+// the group was previously bootstrapped but the operator's view (online members
+// vs the sticky ObservedViewMax — the largest view ever seen) shows fewer than
+// a majority of the observed-max members ONLINE.
 func isQuorumLost(cluster *mysqlv1alpha1.Cluster, observed observedCluster) bool {
 	if !cluster.IsGroupReplication() {
 		return false
@@ -572,5 +572,25 @@ func isQuorumLost(cluster *mysqlv1alpha1.Cluster, observed observedCluster) bool
 	if gr == nil || !gr.Bootstrapped {
 		return false
 	}
-	return observed.GroupReplication == nil || !observed.GroupReplication.HasQuorum
+	if observed.GroupReplication == nil {
+		// No member reports a group view. Treat as quorum-lost only when the
+		// group was previously observed at its full configured size — not during
+		// initial bootstrap or scale-up where observation is still converging.
+		return gr.ObservedViewMax >= cluster.Spec.Instances
+	}
+	// Use the sticky ObservedViewMax as the quorum denominator so that a
+	// shrunken group (members expelled) is flagged as quorum-lost, while a
+	// bootstrapping group that hasn't yet reached its full size uses the
+	// actual view size. MergeStatus applies the same logic when persisting.
+	denominator := gr.ObservedViewMax
+	if denominator <= 0 {
+		denominator = len(observed.GroupReplication.Members)
+	}
+	online := 0
+	for _, m := range observed.GroupReplication.Members {
+		if m.State == groupreplication.MemberStateOnline {
+			online++
+		}
+	}
+	return online*2 <= denominator
 }
