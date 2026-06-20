@@ -28,7 +28,13 @@ func (r *ClusterReconciler) topologyReconciler(cluster *mysqlv1alpha1.Cluster) t
 	if cluster.IsGroupReplication() {
 		return controllergr.NewReconciler(r.Client, r.Scheme)
 	}
-	return async.NewReconciler(r.Client, r.Scheme, r.instanceControlClient())
+	return async.NewReconciler(
+		r.Client,
+		r.Scheme,
+		r.instanceControlClient(),
+		r.Recorder,
+		r.OperatorExecutableHash,
+	)
 }
 
 func topologyFailoverState(observed observedCluster) topology.FailoverState {
@@ -53,6 +59,7 @@ func topologyFailoverState(observed observedCluster) topology.FailoverState {
 		InstanceNames: observed.InstanceNames,
 		Instances:     instances,
 		Fenced:        observed.FencedInstances,
+		Diverged:      observed.DivergedInstances,
 	}
 }
 

@@ -18,6 +18,7 @@ package async
 
 import (
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/topology"
@@ -30,6 +31,8 @@ type Reconciler struct {
 	client          client.Client
 	scheme          *runtime.Scheme
 	semiSyncControl topology.SemiSyncControl
+	recorder        record.EventRecorder
+	operatorHash    string
 }
 
 // NewReconciler creates an async topology reconciler.
@@ -37,6 +40,14 @@ func NewReconciler(
 	kubeClient client.Client,
 	scheme *runtime.Scheme,
 	semiSyncControl topology.SemiSyncControl,
+	recorder record.EventRecorder,
+	operatorHash string,
 ) *Reconciler {
-	return &Reconciler{client: kubeClient, scheme: scheme, semiSyncControl: semiSyncControl}
+	return &Reconciler{
+		client:          kubeClient,
+		scheme:          scheme,
+		semiSyncControl: semiSyncControl,
+		recorder:        recorder,
+		operatorHash:    operatorHash,
+	}
 }

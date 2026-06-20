@@ -73,6 +73,31 @@ type FailoverState struct {
 	InstanceNames []string
 	Instances     map[string]FailoverInstance
 	Fenced        []string
+	Diverged      []string
+}
+
+// OperationPhase requests a common observed-status phase patch from the root
+// Cluster reconciler.
+type OperationPhase struct {
+	Phase  string
+	Reason string
+	Ready  bool
+}
+
+// FailoverRequest contains common orchestration inputs for a topology-specific
+// failover pass.
+type FailoverRequest struct {
+	Instances         int
+	Observed          FailoverState
+	RetryInterval     time.Duration
+	ProvisioningRetry time.Duration
+}
+
+// FailoverResult tells the root reconciler whether failover owned this pass.
+type FailoverResult struct {
+	Handled      bool
+	RequeueAfter time.Duration
+	Phase        *OperationPhase
 }
 
 // SemiSyncControl adjusts the acknowledgement count on an async primary.
@@ -106,4 +131,9 @@ type Reconciler interface {
 		cluster *mysqlv1alpha1.Cluster,
 		observed AvailabilityState,
 	) error
+	ReconcileFailover(
+		ctx context.Context,
+		cluster *mysqlv1alpha1.Cluster,
+		request FailoverRequest,
+	) (FailoverResult, error)
 }

@@ -35,7 +35,7 @@ func TestEnsurePrimaryLeaseCreatesOwnedLease(t *testing.T) {
 	ctx := context.Background()
 	cluster := testCluster()
 	scheme := testScheme(t)
-	r := NewReconciler(fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build(), scheme, nil)
+	r := NewReconciler(fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build(), scheme, nil, nil, "")
 
 	if err := r.EnsurePrimaryLease(ctx, cluster); err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestPrimaryLeaseStatusHonorsExpiry(t *testing.T) {
 		},
 	}
 	scheme := testScheme(t)
-	r := NewReconciler(fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, lease).Build(), scheme, nil)
+	r := NewReconciler(fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, lease).Build(), scheme, nil, nil, "")
 
 	status, err := r.PrimaryLeaseStatus(ctx, cluster, holder)
 	if err != nil {

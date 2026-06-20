@@ -17,12 +17,164 @@ limitations under the License.
 package async
 
 import (
+	"context"
 	"fmt"
 	"slices"
+	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/topology"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/replication"
 )
+
+const (
+	phaseBlocked     = "Blocked"
+	phaseDegraded    = "Degraded"
+	phaseFailingOver = "FailingOver"
+)
+
+// ReconcileFailover fences an unreachable async primary and selects the safest
+// replica after the configured delay and primary Lease have expired.
+func (r *Reconciler) ReconcileFailover(
+	ctx context.Context,
+	cluster *mysqlv1alpha1.Cluster,
+	request topology.FailoverRequest,
+) (topology.FailoverResult, error) {
+	observed := request.Observed
+	if cluster.Status.CurrentPrimary == "" || observed.PrimaryName == "" || request.Instances < 2 {
+		return topology.FailoverResult{}, nil
+	}
+	if PrimaryHealthy(observed) {
+		if cluster.Status.PrimaryFailingSince != "" {
+			return topology.FailoverResult{}, r.updateStatus(ctx, cluster, func(status *mysqlv1alpha1.ClusterStatus) {
+				status.PrimaryFailingSince = ""
+			})
+		}
+		return topology.FailoverResult{}, nil
+	}
+
+	failingSince, err := r.recordPrimaryFailing(ctx, cluster)
+	if err != nil {
+		return topology.FailoverResult{Handled: true}, err
+	}
+	delay := time.Duration(cluster.Spec.FailoverDelay) * time.Second
+	if cluster.Spec.InPlaceInstanceManagerUpdates && r.operatorHash != "" {
+		if stale, ok := isInstanceHashStale(cluster, observed.PrimaryName, r.operatorHash); ok && stale {
+			logf.FromContext(ctx).Info("Primary is unreachable but its manager hash is stale; extending failover grace for in-place upgrade",
+				"instance", observed.PrimaryName)
+			delay = max(delay, 30*time.Second)
+		}
+	}
+	if remaining := delay - time.Since(failingSince); remaining > 0 {
+		reason := fmt.Sprintf("Primary %s unreachable; waiting %s before failover", observed.PrimaryName, remaining.Round(time.Second))
+		return phaseResult(remaining, phaseDegraded, reason), nil
+	}
+
+	knownDiverged := append(slices.Clone(observed.Diverged), cluster.Status.DivergedInstances...)
+	candidate, reason := SelectFailoverCandidate(observed, knownDiverged)
+	if candidate == "" {
+		if !HasObservedReplica(observed) {
+			return topology.FailoverResult{}, nil
+		}
+		blockReason := fmt.Sprintf("Cannot fail over from %s: %s", observed.PrimaryName, reason)
+		return phaseResult(request.RetryInterval, phaseBlocked, blockReason), nil
+	}
+
+	lease, err := r.PrimaryLeaseStatus(ctx, cluster, observed.PrimaryName)
+	if err != nil {
+		return topology.FailoverResult{Handled: true}, err
+	}
+	if lease.Held {
+		reason := fmt.Sprintf("Primary lease still held by %s; waiting for expiry", observed.PrimaryName)
+		return phaseResult(lease.RetryAfter, phaseDegraded, reason), nil
+	}
+	if err := r.fenceInstancePod(ctx, cluster, observed.PrimaryName); err != nil {
+		return topology.FailoverResult{Handled: true}, fmt.Errorf("fence old primary %s: %w", observed.PrimaryName, err)
+	}
+
+	logf.FromContext(ctx).Info("Failing over primary", "from", observed.PrimaryName, "to", candidate)
+	message := fmt.Sprintf("Failing over from %s to %s", observed.PrimaryName, candidate)
+	if err := r.updateStatus(ctx, cluster, func(status *mysqlv1alpha1.ClusterStatus) {
+		status.TargetPrimary = candidate
+		status.TargetPrimaryTimestamp = metav1.Now().Format(time.RFC3339)
+		status.PrimaryFailingSince = ""
+		status.Phase = phaseFailingOver
+		status.PhaseReason = message
+	}); err != nil {
+		return topology.FailoverResult{Handled: true}, err
+	}
+	if r.recorder != nil {
+		r.recorder.Event(cluster, corev1.EventTypeWarning, phaseFailingOver, message)
+	}
+	return topology.FailoverResult{Handled: true, RequeueAfter: request.ProvisioningRetry}, nil
+}
+
+func phaseResult(requeueAfter time.Duration, phase, reason string) topology.FailoverResult {
+	return topology.FailoverResult{
+		Handled:      true,
+		RequeueAfter: requeueAfter,
+		Phase:        &topology.OperationPhase{Phase: phase, Reason: reason},
+	}
+}
+
+func (r *Reconciler) fenceInstancePod(ctx context.Context, cluster *mysqlv1alpha1.Cluster, name string) error {
+	pod := &corev1.Pod{}
+	if err := r.client.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: name}, pod); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if pod.DeletionTimestamp != nil {
+		return nil
+	}
+	return client.IgnoreNotFound(r.client.Delete(ctx, pod))
+}
+
+func (r *Reconciler) recordPrimaryFailing(ctx context.Context, cluster *mysqlv1alpha1.Cluster) (time.Time, error) {
+	if existing := cluster.Status.PrimaryFailingSince; existing != "" {
+		if timestamp, err := time.Parse(time.RFC3339, existing); err == nil {
+			return timestamp, nil
+		}
+	}
+	now := time.Now().Truncate(time.Second)
+	if err := r.updateStatus(ctx, cluster, func(status *mysqlv1alpha1.ClusterStatus) {
+		status.PrimaryFailingSince = now.Format(time.RFC3339)
+	}); err != nil {
+		return time.Time{}, err
+	}
+	return now, nil
+}
+
+func (r *Reconciler) updateStatus(
+	ctx context.Context,
+	cluster *mysqlv1alpha1.Cluster,
+	mutate func(*mysqlv1alpha1.ClusterStatus),
+) error {
+	latest := &mysqlv1alpha1.Cluster{}
+	key := types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}
+	if err := r.client.Get(ctx, key, latest); err != nil {
+		return err
+	}
+	before := latest.DeepCopy()
+	mutate(&latest.Status)
+	if err := r.client.Status().Patch(ctx, latest, client.MergeFrom(before)); err != nil {
+		return err
+	}
+	latest.Status.DeepCopyInto(&cluster.Status)
+	return nil
+}
+
+func isInstanceHashStale(cluster *mysqlv1alpha1.Cluster, name, operatorHash string) (bool, bool) {
+	hash, ok := cluster.Status.ExecutableHashByInstance[name]
+	if !ok {
+		return false, false
+	}
+	return hash != "" && hash != operatorHash, true
+}
 
 // PrimaryHealthy reports whether the expected primary is reachable, ready, and
 // still acting as primary.
