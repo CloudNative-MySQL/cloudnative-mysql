@@ -14,29 +14,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package async
+package groupreplication
 
 import (
-	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	"context"
 
+	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/topology"
 )
 
-var _ topology.Reconciler = (*Reconciler)(nil)
-
-// Reconciler owns async and semi-sync topology-specific reconciliation.
-type Reconciler struct {
-	client          client.Client
-	scheme          *runtime.Scheme
-	semiSyncControl topology.SemiSyncControl
-}
-
-// NewReconciler creates an async topology reconciler.
-func NewReconciler(
-	kubeClient client.Client,
-	scheme *runtime.Scheme,
-	semiSyncControl topology.SemiSyncControl,
-) *Reconciler {
-	return &Reconciler{client: kubeClient, scheme: scheme, semiSyncControl: semiSyncControl}
+// ReconcileAvailability is a no-op because semi-sync is not part of GR.
+func (r *Reconciler) ReconcileAvailability(
+	context.Context,
+	*mysqlv1alpha1.Cluster,
+	topology.AvailabilityState,
+) error {
+	return nil
 }

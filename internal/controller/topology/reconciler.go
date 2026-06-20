@@ -43,6 +43,30 @@ type PrimaryLeaseStatus struct {
 	RetryAfter time.Duration
 }
 
+// InstanceAvailability is the topology-neutral health view of one instance.
+type InstanceAvailability struct {
+	Ready bool
+}
+
+// AvailabilityState contains the observed state needed for topology-specific
+// degraded-cluster adjustments.
+type AvailabilityState struct {
+	PrimaryName       string
+	Instances         map[string]InstanceAvailability
+	DivergedInstances []string
+	FencedInstances   []string
+}
+
+// SemiSyncControl adjusts the acknowledgement count on an async primary.
+type SemiSyncControl interface {
+	SetSemiSyncWaitForReplicaCount(
+		ctx context.Context,
+		cluster *mysqlv1alpha1.Cluster,
+		instanceName string,
+		count int,
+	) error
+}
+
 // Reconciler owns behavior that differs between replication topologies. The
 // interface starts with RBAC and will grow as failover, switchover, status, and
 // topology configuration move out of the common Cluster reconciler.
@@ -59,4 +83,9 @@ type Reconciler interface {
 		cluster *mysqlv1alpha1.Cluster,
 		holder string,
 	) (PrimaryLeaseStatus, error)
+	ReconcileAvailability(
+		ctx context.Context,
+		cluster *mysqlv1alpha1.Cluster,
+		observed AvailabilityState,
+	) error
 }

@@ -489,7 +489,7 @@ func (r *ClusterReconciler) blockOnInvalidCertificate(ctx context.Context, clust
 // happen while the cluster is degraded, not only after it returns to Ready.
 func (r *ClusterReconciler) reconcileAvailability(ctx context.Context, cluster *mysqlv1alpha1.Cluster, observed observedCluster) {
 	log := logf.FromContext(ctx)
-	if err := r.reconcileSemiSync(ctx, cluster, observed); err != nil {
+	if err := r.topologyReconciler(cluster).ReconcileAvailability(ctx, cluster, topologyAvailabilityState(observed)); err != nil {
 		log.Info("Semi-sync self-healing pass failed, will retry", "error", err.Error())
 	}
 }

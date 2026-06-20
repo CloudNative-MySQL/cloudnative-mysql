@@ -27,5 +27,20 @@ func (r *ClusterReconciler) topologyReconciler(cluster *mysqlv1alpha1.Cluster) t
 	if cluster.IsGroupReplication() {
 		return controllergr.NewReconciler(r.Client, r.Scheme)
 	}
-	return async.NewReconciler(r.Client, r.Scheme)
+	return async.NewReconciler(r.Client, r.Scheme, r.instanceControlClient())
+}
+
+func topologyAvailabilityState(observed observedCluster) topology.AvailabilityState {
+	instances := make(map[string]topology.InstanceAvailability, len(observed.StatusByInstance))
+	for name, status := range observed.StatusByInstance {
+		if status != nil {
+			instances[name] = topology.InstanceAvailability{Ready: status.IsReady}
+		}
+	}
+	return topology.AvailabilityState{
+		PrimaryName:       observed.PrimaryName,
+		Instances:         instances,
+		DivergedInstances: observed.DivergedInstances,
+		FencedInstances:   observed.FencedInstances,
+	}
 }
