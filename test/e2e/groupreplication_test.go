@@ -218,4 +218,65 @@ var _ = Describe("Group Replication multi-member", Ordered, func() {
 				"ro must route to both SECONDARYs and never the PRIMARY")
 		}, e2eTimeout(3*time.Minute), 5*time.Second).Should(Succeed())
 	})
+
+	It("performs a planned switchover via set_as_primary and moves rw to the new primary", func() {
+		const target = cluster + "-2"
+
+		By("requesting a planned switchover to a secondary by setting targetPrimary")
+		// The operator validates the target is an ONLINE SECONDARY and invokes
+		// group_replication_set_as_primary on the group; the group hands the role over
+		// atomically and the operator mirrors the new PRIMARY into currentPrimary. This
+		// is the regression guard for the convergence bug where the operator only
+		// mirrors currentPrimary on a reconcile that does not take over the switchover,
+		// so completion must be keyed on the group's own observed view, not the stale
+		// status value.
+		payload := fmt.Sprintf(
+			`{"status":{"targetPrimary":%q,"targetPrimaryTimestamp":%q}}`,
+			target, time.Now().UTC().Format(time.RFC3339))
+		_, err := kubectl("patch", "cluster", cluster, "-n", testNamespace,
+			"--subresource=status", "--type=merge", "-p", payload)
+		Expect(err).NotTo(HaveOccurred(), "failed to request switchover")
+
+		By("waiting for the group to elect the target and the operator to mirror it into currentPrimary")
+		Eventually(func(g Gomega) {
+			g.Expect(clusterPrimary(cluster)).To(Equal(target), "currentPrimary must advance to the switchover target")
+			primaryMember, err := clusterField(cluster, "{.status.groupReplication.primaryMember}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(primaryMember).To(Equal(target), "the group must report the target as PRIMARY")
+			// And the cluster must not be wedged in Blocked (the old deadlock symptom).
+			phase, err := clusterField(cluster, "{.status.phase}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(phase).NotTo(Equal("Blocked"), "switchover must not wedge the cluster in Blocked")
+		}, e2eTimeout(8*time.Minute), 10*time.Second).Should(Succeed())
+
+		By("verifying the rw Service follows the new primary")
+		Eventually(func(g Gomega) {
+			out, err := kubectl("get", "endpointslice", "-n", testNamespace,
+				"-l", "kubernetes.io/service-name="+cluster+"-rw",
+				"-o", "jsonpath={.items[*].endpoints[*].targetRef.name}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(strings.Fields(out)).To(ConsistOf(target), "rw must route to the new PRIMARY")
+		}, e2eTimeout(5*time.Minute), 5*time.Second).Should(Succeed())
+
+		By("verifying the new primary is writable and the demoted old primary is read-only")
+		password := appPassword(cluster)
+		Eventually(func(g Gomega) {
+			_, err := mysqlExec(target, "app", password, "app", "REPLACE INTO gr_multi VALUES (43);")
+			g.Expect(err).NotTo(HaveOccurred(), "the new PRIMARY must be writable")
+		}, e2eTimeout(3*time.Minute), 5*time.Second).Should(Succeed())
+		_, err = mysqlExec(primary, "app", password, "app", "REPLACE INTO gr_multi VALUES (8);")
+		Expect(err).To(HaveOccurred(), "the demoted old primary must now be read-only")
+
+		By("verifying every member stays ONLINE with exactly one PRIMARY after the switchover")
+		Eventually(func(g Gomega) {
+			states, err := clusterField(cluster, `{.status.groupReplication.members[*].state}`)
+			g.Expect(err).NotTo(HaveOccurred())
+			for _, state := range strings.Fields(states) {
+				g.Expect(state).To(Equal("ONLINE"), "every member must stay ONLINE through the switchover")
+			}
+			roles, err := clusterField(cluster, `{.status.groupReplication.members[*].role}`)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(strings.Count(roles, "PRIMARY")).To(Equal(1), "exactly one PRIMARY after switchover")
+		}, e2eTimeout(5*time.Minute), 5*time.Second).Should(Succeed())
+	})
 })

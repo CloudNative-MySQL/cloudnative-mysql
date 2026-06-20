@@ -107,6 +107,29 @@ func TestDetachedDoubleStartFails(t *testing.T) {
 	}
 }
 
+// TestDetachedStartAfterCleanExit covers the clone-restart path: once the process
+// has exited (done closed), Start may be called again without an explicit clear and
+// must relaunch rather than report "already running". The single-critical-section
+// guard still rejects a Start while a process is genuinely running
+// (TestDetachedDoubleStartFails).
+func TestDetachedStartAfterCleanExit(t *testing.T) {
+	s := NewDetachedSupervisor("/bin/sh", []string{"-c", "exit 0"}, WithFileOutput(openOutFile(t), openOutFile(t)))
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	if err := s.Wait(); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	// The process has exited; a fresh Start must succeed (clone-restart contract).
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start after clean exit: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Shutdown(context.Background()) })
+	if !s.Running() {
+		t.Error("expected Running() true after restart")
+	}
+}
+
 func TestDetachedGracefulShutdown(t *testing.T) {
 	s := NewDetachedSupervisor("/bin/sleep", []string{"60"},
 		WithFileOutput(openOutFile(t), openOutFile(t)),
