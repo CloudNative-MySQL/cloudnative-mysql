@@ -245,6 +245,20 @@ func (r *ClusterReconciler) checkFenceQuorumGuard(ctx context.Context, cluster *
 		GroupReplication: observed.GroupReplication,
 	})
 
+	// Persisted fenced members have already been instructed to leave the
+	// group; the group view may be stale and still show them ONLINE. Remove
+	// them so the quorum math sees the effective member count after all
+	// persisted fences take effect.
+	if gr := latest.Status.GroupReplication; gr != nil && len(persisted) > 0 {
+		filtered := gr.Members[:0]
+		for _, m := range gr.Members {
+			if !persisted[m.Instance] {
+				filtered = append(filtered, m)
+			}
+		}
+		gr.Members = filtered
+	}
+
 	// Check whether fencing the new instances (on top of the ones already
 	// fenced) would break quorum.
 	topo := r.topologyReconciler(cluster)
