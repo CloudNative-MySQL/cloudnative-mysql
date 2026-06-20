@@ -60,6 +60,8 @@ type fakeLocal struct {
 	grBootstrapErr    error
 	grRecoveryUser    string
 	grRecoveryChanSet bool
+	setAsPrimaryUUID  string
+	setAsPrimaryErr   error
 }
 
 func (f *fakeLocal) Status(context.Context) (*webserver.Status, error) { return f.status, f.statusErr }
@@ -91,6 +93,10 @@ func (f *fakeLocal) StartGroupReplication(context.Context) error {
 func (f *fakeLocal) BootstrapGroup(context.Context) error {
 	f.grBootstrapped = true
 	return f.grBootstrapErr
+}
+func (f *fakeLocal) SetAsPrimary(_ context.Context, memberUUID string) error {
+	f.setAsPrimaryUUID = memberUUID
+	return f.setAsPrimaryErr
 }
 
 func newReconciler(

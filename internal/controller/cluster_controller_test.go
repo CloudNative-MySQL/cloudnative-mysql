@@ -137,6 +137,10 @@ func (readyStatusClient) SetSemiSyncWaitForReplicaCount(context.Context, *mysqlv
 	return nil
 }
 
+func (readyStatusClient) SetAsPrimary(context.Context, *mysqlv1alpha1.Cluster, string, string) error {
+	return nil
+}
+
 func (readyStatusClient) Reload(context.Context, *mysqlv1alpha1.Cluster, string, webserver.ReloadRequest) (*webserver.ReloadResponse, error) {
 	return &webserver.ReloadResponse{}, nil
 }
@@ -166,6 +170,8 @@ type recordingControlClient struct {
 	upgraded     []string
 	upgradeHash  map[string]string
 	upgradeBytes map[string][]byte
+
+	setAsPrimary map[string]string
 }
 
 func (c *recordingControlClient) Status(_ context.Context, _ *mysqlv1alpha1.Cluster, instanceName string) (*webserver.Status, error) {
@@ -243,6 +249,14 @@ func (c *recordingControlClient) SetSemiSyncWaitForReplicaCount(_ context.Contex
 		c.semiSyncWaits = map[string]int{}
 	}
 	c.semiSyncWaits[instanceName] = count
+	return nil
+}
+
+func (c *recordingControlClient) SetAsPrimary(_ context.Context, _ *mysqlv1alpha1.Cluster, instanceName string, memberUUID string) error {
+	if c.setAsPrimary == nil {
+		c.setAsPrimary = map[string]string{}
+	}
+	c.setAsPrimary[instanceName] = memberUUID
 	return nil
 }
 

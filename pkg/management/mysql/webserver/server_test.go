@@ -44,6 +44,7 @@ type fakeController struct {
 	restartInPlaceErr error
 	upgradeErr        error
 	semiSyncWaitErr   error
+	setAsPrimaryErr   error
 
 	promoteCalled        bool
 	demoteCalled         bool
@@ -54,6 +55,8 @@ type fakeController struct {
 	upgradeHash          string
 	upgradeBody          []byte
 	upgradeCalled        bool
+	setAsPrimaryUUID     string
+	setAsPrimaryCalled   bool
 
 	reloadReq  *ReloadRequest
 	reloadResp *ReloadResponse
@@ -111,6 +114,11 @@ func (f *fakeController) EnsureReplicaConfigured(_ context.Context, opts replica
 func (f *fakeController) SetSemiSyncWaitForReplicaCount(_ context.Context, count int) error {
 	f.semiSyncWaitCount = &count
 	return f.semiSyncWaitErr
+}
+func (f *fakeController) SetAsPrimary(_ context.Context, memberUUID string) error {
+	f.setAsPrimaryCalled = true
+	f.setAsPrimaryUUID = memberUUID
+	return f.setAsPrimaryErr
 }
 func (f *fakeController) Restart(context.Context) error { f.restartCalled = true; return f.restartErr }
 func (f *fakeController) RestartInPlace(context.Context) error {
