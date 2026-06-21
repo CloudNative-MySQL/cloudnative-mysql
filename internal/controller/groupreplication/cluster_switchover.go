@@ -22,7 +22,6 @@ import (
 	"strings"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
@@ -30,15 +29,17 @@ import (
 	mysqlgr "github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/groupreplication"
 )
 
-// ReconcileSwitchover validates the target SECONDARY and invokes
-// group_replication_set_as_primary on the current primary to initiate a
-// planned handoff. The operator observes the resulting election via
-// MergeStatus and the in-Pod reconcilers never self-promote under GR.
+// ReconcileSwitchover is an optimistic best-effort attempt to hand off the
+// primary to the target instance via group_replication_set_as_primary. If the
+// target is not yet resolvable, valid, or reachable the call is silently
+// retried on the next reconcile; it never blocks the Cluster phase. Only a
+// maxSwitchoverDelay expiry clears the request by resetting targetPrimary.
 func (r *Reconciler) ReconcileSwitchover(
 	ctx context.Context,
 	cluster *mysqlv1alpha1.Cluster,
 	observed topology.FailoverState,
 ) (topology.FailoverResult, error) {
+	log := logf.FromContext(ctx)
 	target := cluster.Status.TargetPrimary
 	current := cluster.Status.CurrentPrimary
 	if target == "" || target == current || current == "" {
@@ -47,13 +48,8 @@ func (r *Reconciler) ReconcileSwitchover(
 
 	targetUUID, err := r.memberUUIDForInstance(ctx, cluster, current, target)
 	if err != nil {
-		return topology.FailoverResult{
-			Handled: true,
-			Phase: &topology.OperationPhase{
-				Phase:  topology.PhaseBlocked,
-				Reason: fmt.Sprintf("cannot resolve target primary %s: %v", target, err),
-			},
-		}, nil
+		log.V(1).Info("Skipping switchover: cannot resolve target UUID yet", "target", target, "error", err)
+		return topology.FailoverResult{}, nil
 	}
 
 	grStatus := cluster.Status.GroupReplication
@@ -68,31 +64,13 @@ func (r *Reconciler) ReconcileSwitchover(
 		}
 	}
 	if targetMember == nil {
-		return topology.FailoverResult{
-			Handled: true,
-			Phase: &topology.OperationPhase{
-				Phase:  topology.PhaseBlocked,
-				Reason: fmt.Sprintf("target primary %s is not in the group", target),
-			},
-		}, nil
+		log.V(1).Info("Skipping switchover: target not in the group view yet", "target", target)
+		return topology.FailoverResult{}, nil
 	}
-	if targetMember.State != mysqlgr.MemberStateOnline {
-		return topology.FailoverResult{
-			Handled: true,
-			Phase: &topology.OperationPhase{
-				Phase:  topology.PhaseBlocked,
-				Reason: fmt.Sprintf("target primary %s is not ONLINE (state=%s)", target, targetMember.State),
-			},
-		}, nil
-	}
-	if targetMember.Role != mysqlgr.MemberRoleSecondary {
-		return topology.FailoverResult{
-			Handled: true,
-			Phase: &topology.OperationPhase{
-				Phase:  topology.PhaseBlocked,
-				Reason: fmt.Sprintf("target primary %s has role %s, want SECONDARY", target, targetMember.Role),
-			},
-		}, nil
+	if targetMember.State != mysqlgr.MemberStateOnline || targetMember.Role != mysqlgr.MemberRoleSecondary {
+		log.V(1).Info("Skipping switchover: target not ready yet",
+			"target", target, "state", targetMember.State, "role", targetMember.Role)
+		return topology.FailoverResult{}, nil
 	}
 
 	startedAt, err := r.ensureSwitchoverStarted(ctx, cluster)
@@ -105,14 +83,8 @@ func (r *Reconciler) ReconcileSwitchover(
 	}
 
 	if err := r.switchoverControl.SetAsPrimary(ctx, cluster, current, targetUUID); err != nil {
-		logf.FromContext(ctx).Error(err, "SetAsPrimary failed", "target", target, "uuid", targetUUID)
-		return topology.FailoverResult{
-			Handled: true,
-			Phase: &topology.OperationPhase{
-				Phase:  topology.PhaseBlocked,
-				Reason: fmt.Sprintf("switchover to %s failed: %v", target, err),
-			},
-		}, nil
+		log.Info("SetAsPrimary failed, will retry", "target", target, "uuid", targetUUID, "error", err)
+		return topology.FailoverResult{}, nil
 	}
 
 	return topology.FailoverResult{
@@ -176,19 +148,13 @@ func (r *Reconciler) abortSwitchover(
 	cluster *mysqlv1alpha1.Cluster,
 	current, target string,
 ) (topology.FailoverResult, error) {
-	reason := fmt.Sprintf("switchover to %s aborted: not promoted within maxSwitchoverDelay (%ds)",
-		target, cluster.Spec.MaxSwitchoverDelay)
-	logf.FromContext(ctx).Info("Aborting switchover", "target", target, "restoredPrimary", current, "reason", reason)
+	logf.FromContext(ctx).Info("Aborting switchover: not promoted within maxSwitchoverDelay",
+		"target", target, "delay", cluster.Spec.MaxSwitchoverDelay)
 	if err := topology.PatchClusterStatus(ctx, r.client, cluster, func(status *mysqlv1alpha1.ClusterStatus) {
 		status.TargetPrimary = current
 		status.TargetPrimaryTimestamp = ""
-		status.Phase = topology.PhaseBlocked
-		status.PhaseReason = reason
 	}); err != nil {
 		return topology.FailoverResult{}, err
-	}
-	if r.recorder != nil {
-		r.recorder.Event(cluster, corev1.EventTypeWarning, topology.PhaseBlocked, reason)
 	}
 	return topology.FailoverResult{Handled: true}, nil
 }
