@@ -48,6 +48,11 @@ type StartOptions struct {
 	ClusterName string
 	// InstanceName is this instance's Pod name.
 	InstanceName string
+	// GroupReplication selects the GR topology strategy. Under GR the primary
+	// Lease fencing layer is unused (the group's own quorum guards split-brain),
+	// and the instance ServiceAccount is granted no Lease RBAC, so the role
+	// manager must neither watch nor touch Leases.
+	GroupReplication bool
 	// SourceTemplate holds the static replication connection parameters; the
 	// source host is derived from currentPrimary.
 	SourceTemplate replication.SourceOptions
@@ -97,13 +102,14 @@ func Start(ctx context.Context, opts StartOptions) error {
 	}
 
 	reconciler := &Reconciler{
-		Client:         mgr.GetClient(),
-		DoorbellClient: doorbellClient,
-		ClusterKey:     types.NamespacedName{Namespace: opts.Namespace, Name: opts.ClusterName},
-		InstanceName:   opts.InstanceName,
-		ServiceDomain:  opts.Namespace + ".svc",
-		SourceTemplate: opts.SourceTemplate,
-		Local:          opts.Local,
+		Client:           mgr.GetClient(),
+		DoorbellClient:   doorbellClient,
+		ClusterKey:       types.NamespacedName{Namespace: opts.Namespace, Name: opts.ClusterName},
+		InstanceName:     opts.InstanceName,
+		ServiceDomain:    opts.Namespace + ".svc",
+		SourceTemplate:   opts.SourceTemplate,
+		Local:            opts.Local,
+		groupReplication: opts.GroupReplication,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		return err
@@ -171,16 +177,20 @@ func startAPIServerProber(ctx context.Context, cfg *rest.Config, opts StartOptio
 }
 
 func clusterCacheOptions(opts StartOptions) cache.Options {
-	return cache.Options{
-		ByObject: map[client.Object]cache.ByObject{
-			&mysqlv1alpha1.Cluster{}: {
-				Namespaces: map[string]cache.Config{opts.Namespace: {}},
-				Field:      fields.OneTermEqualSelector("metadata.name", opts.ClusterName),
-			},
-			&coordinationv1.Lease{}: {
-				Namespaces: map[string]cache.Config{opts.Namespace: {}},
-				Field:      fields.OneTermEqualSelector("metadata.name", opts.ClusterName+"-primary"),
-			},
+	byObject := map[client.Object]cache.ByObject{
+		&mysqlv1alpha1.Cluster{}: {
+			Namespaces: map[string]cache.Config{opts.Namespace: {}},
+			Field:      fields.OneTermEqualSelector("metadata.name", opts.ClusterName),
 		},
 	}
+	// The primary Lease fencing layer is async-only. Under GR the instance
+	// ServiceAccount holds no Lease RBAC, so watching Leases here would fail the
+	// cache's list/watch with a forbidden error; skip it entirely.
+	if !opts.GroupReplication {
+		byObject[&coordinationv1.Lease{}] = cache.ByObject{
+			Namespaces: map[string]cache.Config{opts.Namespace: {}},
+			Field:      fields.OneTermEqualSelector("metadata.name", opts.ClusterName+"-primary"),
+		}
+	}
+	return cache.Options{ByObject: byObject}
 }

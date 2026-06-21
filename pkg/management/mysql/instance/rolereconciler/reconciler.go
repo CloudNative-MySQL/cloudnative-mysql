@@ -108,6 +108,10 @@ type Reconciler struct {
 	SourceTemplate replication.SourceOptions
 	// Local drives the local mysqld.
 	Local LocalInstance
+	// groupReplication selects the GR topology strategy. Under GR the primary
+	// Lease fencing layer is never used (group quorum guards split-brain) and the
+	// instance SA holds no Lease RBAC, so the lease layer stays disabled.
+	groupReplication bool
 	// primaryLeaseEnabled controls the optional primary Lease fencing layer.
 	primaryLeaseEnabled bool
 }
@@ -120,7 +124,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result
 	if err := r.Get(ctx, r.ClusterKey, cluster); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	r.primaryLeaseEnabled = cluster.Spec.EnablePrimaryLease == nil || *cluster.Spec.EnablePrimaryLease
+	// The primary Lease is an async-only split-brain guard. Under GR the group's
+	// own quorum provides safety and the instance SA holds no Lease RBAC, so the
+	// lease layer must stay disabled regardless of the spec default.
+	r.primaryLeaseEnabled = !r.groupReplication &&
+		(cluster.Spec.EnablePrimaryLease == nil || *cluster.Spec.EnablePrimaryLease)
 
 	me := r.InstanceName
 
