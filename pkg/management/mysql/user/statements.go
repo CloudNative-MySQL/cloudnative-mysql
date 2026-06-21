@@ -43,7 +43,7 @@ var reservedUsers = map[string]struct{}{
 	"cnmsql_repl":    {},
 	"cnmsql_backup":  {},
 	"cnmsql_metrics": {},
-	"root":                      {},
+	"root":           {},
 }
 
 // IsReservedUser reports whether name is an operator/server-managed account that

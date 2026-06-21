@@ -267,10 +267,10 @@ func backupJob(
 			Name:      jobName,
 			Namespace: backup.Namespace,
 			Labels: map[string]string{
-				"app.kubernetes.io/name":            "cnmsql",
-				"app.kubernetes.io/managed-by":      "cnmsql",
-				clusterLabel:                        cluster.Name,
-				"mysql.cnmsql.co/backup": backup.Name,
+				"app.kubernetes.io/name":       "cnmsql",
+				"app.kubernetes.io/managed-by": "cnmsql",
+				clusterLabel:                   cluster.Name,
+				"mysql.cnmsql.co/backup":       backup.Name,
 			},
 		},
 		Spec: batchv1.JobSpec{

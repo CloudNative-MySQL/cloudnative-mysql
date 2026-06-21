@@ -331,7 +331,7 @@ func TestResolveServerVersionFromImageTag(t *testing.T) {
 		"ghcr.io/cnmsql/cnmsql-instance:8.0": defaultMySQL80ServerVersion,
 		"ghcr.io/cnmsql/cnmsql-instance:8.4": defaultMySQL84ServerVersion,
 		"ghcr.io/cnmsql/cnmsql-instance:9.x": defaultMySQL9xServerVersion,
-		"registry/cnmsql:8.0.46-37":                     "8.0.46-37",
+		"registry/cnmsql:8.0.46-37":          "8.0.46-37",
 	}
 
 	for image, want := range tests {
