@@ -1,6 +1,4 @@
 #!/bin/sh
-set -e
-
 usage() {
   cat <<EOF
 Usage: $0 [-b bindir] [-d] [tag]
