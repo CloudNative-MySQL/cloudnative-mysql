@@ -23,12 +23,55 @@ import (
 	"time"
 
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
 	mysqlconfig "github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/config"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/webserver"
 )
+
+// Cluster status phases recorded on the Cluster CRD.
+const (
+	PhasePending        = "Pending"
+	PhaseProvisioning   = "Provisioning"
+	PhaseReady          = "Ready"
+	PhaseBlocked        = "Blocked"
+	PhaseSwitchover     = "Switchover"
+	PhaseDegraded       = "Degraded"
+	PhaseFailingOver    = "FailingOver"
+	PhaseUpgrading      = "Upgrading"
+	PhaseWaitingForUser = "WaitingForUser"
+)
+
+// TLS paths inside the instance container.
+const (
+	ClientCAPath  = "/etc/cloudnative-mysql/tls/client-ca"
+	ServerTLSPath = "/etc/cloudnative-mysql/tls/server"
+)
+
+// PatchClusterStatus fetches the latest Cluster, applies mutate and patches the
+// status sub-resource, then copies the result back into cluster.
+func PatchClusterStatus(
+	ctx context.Context,
+	c client.Client,
+	cluster *mysqlv1alpha1.Cluster,
+	mutate func(*mysqlv1alpha1.ClusterStatus),
+) error {
+	latest := &mysqlv1alpha1.Cluster{}
+	key := types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}
+	if err := c.Get(ctx, key, latest); err != nil {
+		return err
+	}
+	before := latest.DeepCopy()
+	mutate(&latest.Status)
+	if err := c.Status().Patch(ctx, latest, client.MergeFrom(before)); err != nil {
+		return err
+	}
+	latest.Status.DeepCopyInto(&cluster.Status)
+	return nil
+}
 
 // InstanceIdentity describes one instance's topology-specific Kubernetes
 // identity. Common ServiceAccount and RoleBinding lifecycle stays in the
@@ -160,9 +203,21 @@ type QuorumResult struct {
 	Quorum      int
 }
 
-// ForceQuorumRecovery describes a guided quorum-recovery action — currently a
-// force_members re-form from the most-advanced survivor — computed by the
-// operator. (Total-outage re-bootstrap is a later phase; see M-GR.7.)
+// Quorum-recovery action kinds carried by ForceQuorumRecovery.Action.
+const (
+	// QuorumRecoveryForceMembers re-forms a group that still has at least one
+	// ONLINE survivor below quorum, via group_replication_force_members.
+	QuorumRecoveryForceMembers = "force_members"
+	// QuorumRecoveryRebootstrap re-creates the group from scratch when no member
+	// survived ONLINE (total outage), by bootstrapping the most-advanced member.
+	QuorumRecoveryRebootstrap = "rebootstrap"
+)
+
+// ForceQuorumRecovery describes a guided quorum-recovery action computed by the
+// operator. Two kinds exist (see Action): a force_members re-form from the
+// most-advanced ONLINE survivor, and — when the group has no ONLINE survivor at
+// all — a total-outage re-bootstrap from the most-advanced reachable member.
+// ForceMembers is only set for the force_members action.
 type ForceQuorumRecovery struct {
 	Action       string
 	Survivor     string

@@ -145,6 +145,16 @@ func (r *Reconciler) MergeStatus(cluster *mysqlv1alpha1.Cluster, observed topolo
 			cluster.Status.CurrentPrimary = status.PrimaryMember
 		}
 	}
+	// Clamp the sticky maxima to the desired group size. ObservedViewMax only ever
+	// grows via max(), so after a deliberate scale-down it would stay pinned at the
+	// old, larger size and keep inflating the quorum denominator — making the
+	// smaller group brittle (e.g. 5→3 then losing one member reads as quorum-lost).
+	// spec.Instances is the authoritative group size, so the denominator must track
+	// it down. Failure-driven shrink (spec unchanged) still detects quorum loss.
+	if n := cluster.Spec.Instances; n > 0 {
+		merged.ObservedViewMax = min(merged.ObservedViewMax, n)
+		merged.ObservedOnlineMax = min(merged.ObservedOnlineMax, n)
+	}
 	// Quorum: use the sticky max view size as the denominator so that a group
 	// that shrank (members expelled) is correctly flagged as quorum-lost, while
 	// a bootstrapping group that grows uses its actual size until it reaches

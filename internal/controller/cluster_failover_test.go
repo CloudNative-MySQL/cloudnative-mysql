@@ -31,6 +31,7 @@ import (
 
 	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
 	controllerasync "github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/async"
+	"github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/topology"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/webserver"
 )
 
@@ -308,8 +309,8 @@ func TestReconcilePrimaryChangeAbortsWhenTargetLagsPastMaxSwitchoverDelay(t *tes
 	if gotCluster.Status.TargetPrimary != testPrimary {
 		t.Fatalf("targetPrimary = %q, want reset to %q", gotCluster.Status.TargetPrimary, testPrimary)
 	}
-	if gotCluster.Status.Phase != phaseBlocked {
-		t.Fatalf("phase = %q, want %q", gotCluster.Status.Phase, phaseBlocked)
+	if gotCluster.Status.Phase != topology.PhaseBlocked {
+		t.Fatalf("phase = %q, want %q", gotCluster.Status.Phase, topology.PhaseBlocked)
 	}
 }
 
@@ -392,8 +393,8 @@ func TestReconcileFailoverPromotesBestCandidateImmediately(t *testing.T) {
 	if gotCluster.Status.PrimaryFailingSince != "" {
 		t.Fatalf("primaryFailingSince = %q, want cleared", gotCluster.Status.PrimaryFailingSince)
 	}
-	if gotCluster.Status.Phase != phaseFailingOver {
-		t.Fatalf("phase = %q, want %q", gotCluster.Status.Phase, phaseFailingOver)
+	if gotCluster.Status.Phase != topology.PhaseFailingOver {
+		t.Fatalf("phase = %q, want %q", gotCluster.Status.Phase, topology.PhaseFailingOver)
 	}
 }
 
@@ -423,8 +424,8 @@ func TestReconcileFailoverWaitsForFailoverDelay(t *testing.T) {
 	if gotCluster.Status.PrimaryFailingSince == "" {
 		t.Fatal("primaryFailingSince was not recorded")
 	}
-	if gotCluster.Status.Phase != phaseDegraded {
-		t.Fatalf("phase = %q, want %q", gotCluster.Status.Phase, phaseDegraded)
+	if gotCluster.Status.Phase != topology.PhaseDegraded {
+		t.Fatalf("phase = %q, want %q", gotCluster.Status.Phase, topology.PhaseDegraded)
 	}
 }
 
@@ -492,8 +493,8 @@ func TestReconcileFailoverBlocksWithoutSafeCandidate(t *testing.T) {
 	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}, gotCluster); err != nil {
 		t.Fatal(err)
 	}
-	if gotCluster.Status.Phase != phaseBlocked {
-		t.Fatalf("phase = %q, want %q", gotCluster.Status.Phase, phaseBlocked)
+	if gotCluster.Status.Phase != topology.PhaseBlocked {
+		t.Fatalf("phase = %q, want %q", gotCluster.Status.Phase, topology.PhaseBlocked)
 	}
 }
 
@@ -534,7 +535,7 @@ func TestReconcileFailoverYieldsToProvisioningBeforeAnyReplica(t *testing.T) {
 	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}, gotCluster); err != nil {
 		t.Fatal(err)
 	}
-	if gotCluster.Status.Phase == phaseBlocked {
+	if gotCluster.Status.Phase == topology.PhaseBlocked {
 		t.Fatalf("cluster must not be Blocked during bootstrap, phase=%q", gotCluster.Status.Phase)
 	}
 }

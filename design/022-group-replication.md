@@ -739,11 +739,35 @@ tests. GR stays behind `mode: groupReplication` throughout.
   (Total-outage re-bootstrap — re-forming the group when no member survives
   ONLINE — lands in M-GR.7 alongside the other lifecycle recovery paths.)
 - **M-GR.7 — Lifecycle integration.** Rolling + in-place upgrades, scale up/down,
-  total-outage re-bootstrap (re-form the same group from the most-advanced
-  member once the group has no ONLINE survivor),
-  backup/restore into a fresh group, kubectl plugin GR commands + the
-  documentation contract and safety affordances (structured `--help`/runbooks,
-  consequence summaries, confirmations, command safety matrix), monitoring, docs.
+  total-outage re-bootstrap (**done** — re-form the same group from the
+  most-advanced member once the group has no ONLINE survivor: opt-in via the same
+  `force-quorum-recovery` annotation, but with a stricter safety bar than
+  `force_members` — every configured instance must be reachable with a known
+  `gtid_executed` and the survivor's set must dominate all of them, else the
+  cluster stays `Blocked`; the survivor is stamped `force-group-rebootstrap` and
+  bootstraps the group, others rejoin via distributed recovery),
+  backup/restore into a fresh group (**done** — routes through the
+  topology-agnostic bootstrap path: the recovery primary restores the physical
+  backup and the in-Pod role strategy bootstraps a fresh single-member group,
+  secondaries initialise empty and join via distributed recovery; never rejoins
+  an old group, guaranteed by a fresh pinned group name plus
+  `group_replication_start_on_boot=OFF`. Backups offload to an ONLINE secondary
+  via the existing prefer-standby source selection),
+  monitoring (**done** — the operator publishes each GR cluster's authoritative
+  `status.groupReplication` on its existing `/metrics` endpoint via a collector on
+  the controller-runtime registry: `cnmysql_cluster_gr_has_quorum`,
+  `_gr_bootstrapped`, `_gr_view_size` (the quorum denominator), and
+  `_gr_members{state}` counts per member state; reads the cached client at scrape
+  time, so no extra reconcile or in-Pod query, and async clusters emit nothing),
+  kubectl plugin GR commands (**done** — `kubectl cnmysql group status` renders
+  the operator's cross-validated group view (group name, bootstrapped, quorum,
+  primary, per-member state/role/reachability) and refuses against async
+  clusters; `kubectl cnmysql group recover` requests a guarded quorum recovery by
+  stamping the `force-quorum-recovery` annotation, gated on the same
+  bootstrapped-and-quorum-lost precondition the operator enforces, behind a
+  consequence summary + confirmation. The documentation contract and safety
+  affordances ship in the plugin README: structured `--help`/runbook text,
+  consequence summaries, confirmations, and a command safety matrix).
   Full E2E matrix + async regression suite.
   (GR-specific consequence text — quorum impact, `group recover` — ships with the
   phase that first introduces each command, e.g. `fence` quorum-guard in M-GR.6.)

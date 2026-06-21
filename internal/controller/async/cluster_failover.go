@@ -33,12 +33,6 @@ import (
 	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/replication"
 )
 
-const (
-	phaseBlocked     = "Blocked"
-	phaseDegraded    = "Degraded"
-	phaseFailingOver = "FailingOver"
-)
-
 // ReconcileFailover fences an unreachable async primary and selects the safest
 // replica after the configured delay and primary Lease have expired.
 func (r *Reconciler) ReconcileFailover(
@@ -52,7 +46,7 @@ func (r *Reconciler) ReconcileFailover(
 	}
 	if PrimaryHealthy(observed) {
 		if cluster.Status.PrimaryFailingSince != "" {
-			return topology.FailoverResult{}, r.updateStatus(ctx, cluster, func(status *mysqlv1alpha1.ClusterStatus) {
+			return topology.FailoverResult{}, topology.PatchClusterStatus(ctx, r.client, cluster, func(status *mysqlv1alpha1.ClusterStatus) {
 				status.PrimaryFailingSince = ""
 			})
 		}
@@ -78,17 +72,17 @@ func (r *Reconciler) ReconcileFailover(
 	}
 	if remaining := delay - time.Since(failingSince); remaining > 0 {
 		reason := fmt.Sprintf("Primary %s unreachable; waiting %s before failover", observed.PrimaryName, remaining.Round(time.Second))
-		return phaseResult(remaining, phaseDegraded, reason), nil
+		return phaseResult(remaining, topology.PhaseDegraded, reason), nil
 	}
 
 	knownDiverged := append(slices.Clone(observed.Diverged), cluster.Status.DivergedInstances...)
 	candidate, reason := SelectFailoverCandidate(observed, knownDiverged)
 	if candidate == "" {
-		if !HasObservedReplica(observed) {
+		if !hasObservedReplica(observed) {
 			return topology.FailoverResult{}, nil
 		}
 		blockReason := fmt.Sprintf("Cannot fail over from %s: %s", observed.PrimaryName, reason)
-		return phaseResult(request.RetryInterval, phaseBlocked, blockReason), nil
+		return phaseResult(request.RetryInterval, topology.PhaseBlocked, blockReason), nil
 	}
 
 	lease, err := r.PrimaryLeaseStatus(ctx, cluster, observed.PrimaryName)
@@ -97,7 +91,7 @@ func (r *Reconciler) ReconcileFailover(
 	}
 	if lease.Held {
 		reason := fmt.Sprintf("Primary lease still held by %s; waiting for expiry", observed.PrimaryName)
-		return phaseResult(lease.RetryAfter, phaseDegraded, reason), nil
+		return phaseResult(lease.RetryAfter, topology.PhaseDegraded, reason), nil
 	}
 	if err := r.fenceInstancePod(ctx, cluster, observed.PrimaryName); err != nil {
 		return topology.FailoverResult{Handled: true}, fmt.Errorf("fence old primary %s: %w", observed.PrimaryName, err)
@@ -105,17 +99,17 @@ func (r *Reconciler) ReconcileFailover(
 
 	logf.FromContext(ctx).Info("Failing over primary", "from", observed.PrimaryName, "to", candidate)
 	message := fmt.Sprintf("Failing over from %s to %s", observed.PrimaryName, candidate)
-	if err := r.updateStatus(ctx, cluster, func(status *mysqlv1alpha1.ClusterStatus) {
+	if err := topology.PatchClusterStatus(ctx, r.client, cluster, func(status *mysqlv1alpha1.ClusterStatus) {
 		status.TargetPrimary = candidate
 		status.TargetPrimaryTimestamp = metav1.Now().Format(time.RFC3339)
 		status.PrimaryFailingSince = ""
-		status.Phase = phaseFailingOver
+		status.Phase = topology.PhaseFailingOver
 		status.PhaseReason = message
 	}); err != nil {
 		return topology.FailoverResult{Handled: true}, err
 	}
 	if r.recorder != nil {
-		r.recorder.Event(cluster, corev1.EventTypeWarning, phaseFailingOver, message)
+		r.recorder.Event(cluster, corev1.EventTypeWarning, topology.PhaseFailingOver, message)
 	}
 	return topology.FailoverResult{Handled: true, RequeueAfter: request.ProvisioningRetry}, nil
 }
@@ -150,31 +144,12 @@ func (r *Reconciler) recordPrimaryFailing(ctx context.Context, cluster *mysqlv1a
 		}
 	}
 	now := time.Now().Truncate(time.Second)
-	if err := r.updateStatus(ctx, cluster, func(status *mysqlv1alpha1.ClusterStatus) {
+	if err := topology.PatchClusterStatus(ctx, r.client, cluster, func(status *mysqlv1alpha1.ClusterStatus) {
 		status.PrimaryFailingSince = now.Format(time.RFC3339)
 	}); err != nil {
 		return time.Time{}, err
 	}
 	return now, nil
-}
-
-func (r *Reconciler) updateStatus(
-	ctx context.Context,
-	cluster *mysqlv1alpha1.Cluster,
-	mutate func(*mysqlv1alpha1.ClusterStatus),
-) error {
-	latest := &mysqlv1alpha1.Cluster{}
-	key := types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}
-	if err := r.client.Get(ctx, key, latest); err != nil {
-		return err
-	}
-	before := latest.DeepCopy()
-	mutate(&latest.Status)
-	if err := r.client.Status().Patch(ctx, latest, client.MergeFrom(before)); err != nil {
-		return err
-	}
-	latest.Status.DeepCopyInto(&cluster.Status)
-	return nil
 }
 
 func isInstanceHashStale(cluster *mysqlv1alpha1.Cluster, name, operatorHash string) (bool, bool) {
@@ -192,9 +167,9 @@ func PrimaryHealthy(observed topology.FailoverState) bool {
 	return ok && status.Ready && status.Primary
 }
 
-// HasObservedReplica distinguishes an established replica set from one that is
+// hasObservedReplica distinguishes an established replica set from one that is
 // still being provisioned.
-func HasObservedReplica(observed topology.FailoverState) bool {
+func hasObservedReplica(observed topology.FailoverState) bool {
 	for name := range observed.Instances {
 		if name != observed.PrimaryName {
 			return true

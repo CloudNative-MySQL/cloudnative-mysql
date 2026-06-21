@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"time"
 
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -29,33 +28,14 @@ import (
 	"github.com/CloudNative-MySQL/cloudnative-mysql/cmd/kubectl-cnmysql/plugin"
 )
 
+const (
+	readyYes = "yes"
+	readyNo  = "no"
+)
+
 func newStatusCommand() *cobra.Command {
-	var (
-		output   string
-		watch    bool
-		interval time.Duration
-	)
-	cmd := &cobra.Command{
-		Use:               "status [CLUSTER]",
-		Short:             "Show the status of a cluster and its instances",
-		Args:              cobra.MaximumNArgs(1),
-		ValidArgsFunction: completeClusterArg,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			clusterName := firstArg(args)
-			label := clusterName
-			if label == "" {
-				label = "<default cluster>"
-			}
-			return watchOrOnce(cmd.Context(), watch, "status "+label, interval,
-				func(ctx context.Context) error {
-					return runStatus(ctx, clusterName, output)
-				})
-		},
-	}
-	cmd.Flags().StringVarP(&output, "output", "o", "", "output format: json or yaml (default human-readable)")
-	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "continuously refresh until interrupted")
-	cmd.Flags().DurationVar(&interval, "watch-interval", defaultWatchInterval, "refresh interval for --watch")
-	return cmd
+	return newWatchingCommand("status [CLUSTER]", "Show the status of a cluster and its instances",
+		"status ", runStatus)
 }
 
 func runStatus(ctx context.Context, clusterName, output string) error {
@@ -128,9 +108,9 @@ func printInstances(c *mysqlv1alpha1.Cluster, pods []corev1.Pod) {
 		if pod.Name == primary {
 			role = "primary"
 		}
-		ready := "no"
+		ready := readyNo
 		if plugin.PodReady(pod) {
-			ready = "yes"
+			ready = readyYes
 		}
 		flags := ""
 		if plugin.Contains(c.Status.FencedInstances, pod.Name) {

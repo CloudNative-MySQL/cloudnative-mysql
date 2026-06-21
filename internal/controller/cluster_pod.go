@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
+	"github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/topology"
 	mysqlconfig "github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/config"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/objectstore"
 )
@@ -251,9 +252,9 @@ func joinArgs(cluster *mysqlv1alpha1.Cluster, plan clusterPlan) []string {
 		"--source-port=3306",
 		"--replication-user=" + replicationUser,
 		"--source-ssl",
-		"--source-ssl-ca=" + clientCAPath + "/ca.crt",
-		"--source-ssl-cert=" + serverTLSPath + "/tls.crt",
-		"--source-ssl-key=" + serverTLSPath + "/tls.key",
+		"--source-ssl-ca=" + topology.ClientCAPath + "/ca.crt",
+		"--source-ssl-cert=" + topology.ServerTLSPath + "/tls.crt",
+		"--source-ssl-key=" + topology.ServerTLSPath + "/tls.key",
 		"--source-manager-url=https://" + primaryFQDN + ":8080/cluster/backup",
 		"--source-manager-server-name=" + primaryFQDN,
 	}
@@ -281,15 +282,15 @@ func (r *ClusterReconciler) runArgs(cluster *mysqlv1alpha1.Cluster, _ clusterPla
 		fmt.Sprintf("--admin-port=%d", mysqlconfig.DefaultAdminPort),
 		"--web-addr=:8080",
 		"--health-addr=:8081",
-		"--tls-cert=" + serverTLSPath + "/tls.crt",
-		"--tls-key=" + serverTLSPath + "/tls.key",
-		"--tls-client-ca=" + clientCAPath + "/ca.crt",
+		"--tls-cert=" + topology.ServerTLSPath + "/tls.crt",
+		"--tls-key=" + topology.ServerTLSPath + "/tls.key",
+		"--tls-client-ca=" + topology.ClientCAPath + "/ca.crt",
 		"--source-port=3306",
 		"--replication-user=" + replicationUser,
 		"--source-ssl",
-		"--source-ssl-ca=" + clientCAPath + "/ca.crt",
-		"--source-ssl-cert=" + serverTLSPath + "/tls.crt",
-		"--source-ssl-key=" + serverTLSPath + "/tls.key",
+		"--source-ssl-ca=" + topology.ClientCAPath + "/ca.crt",
+		"--source-ssl-cert=" + topology.ServerTLSPath + "/tls.crt",
+		"--source-ssl-key=" + topology.ServerTLSPath + "/tls.key",
 	}
 	args = append(args, r.topologyReconciler(cluster).PodPolicy(cluster).RunArgs...)
 	if monitoringTLSEnabled(cluster) {
@@ -376,8 +377,8 @@ func volumeMounts() []corev1.VolumeMount {
 		{Name: "run", MountPath: "/var/run/mysqld"},
 		{Name: "backup", MountPath: joinBackupDir},
 		{Name: "config", MountPath: configPath, SubPath: "my.cnf", ReadOnly: true},
-		{Name: "server-tls", MountPath: serverTLSPath, ReadOnly: true},
-		{Name: "client-ca", MountPath: clientCAPath, ReadOnly: true},
+		{Name: "server-tls", MountPath: topology.ServerTLSPath, ReadOnly: true},
+		{Name: "client-ca", MountPath: topology.ClientCAPath, ReadOnly: true},
 	}
 }
 

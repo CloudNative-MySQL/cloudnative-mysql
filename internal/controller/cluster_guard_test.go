@@ -31,6 +31,7 @@ import (
 
 	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
 	controllerasync "github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/async"
+	"github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/topology"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/webserver"
 )
 
@@ -272,7 +273,7 @@ func TestReconcileFencingDeRoutesUnreachableReplica(t *testing.T) {
 	cluster := baseCluster()
 	cluster.Spec.Instances = 2
 	cluster.Status.CurrentPrimary = testPrimary
-	cluster.Status.Phase = phaseReady // established
+	cluster.Status.Phase = topology.PhaseReady // established
 	cluster.Status.EstablishedAt = &metav1.Time{Time: time.Now()}
 	scheme := testScheme(t)
 
@@ -349,7 +350,7 @@ func TestReconcileFencingDoesNotDeRouteDuringProvisioning(t *testing.T) {
 	ctx := context.Background()
 	cluster := baseCluster()
 	cluster.Spec.Instances = 2
-	cluster.Status.Phase = phaseProvisioning // not yet established
+	cluster.Status.Phase = topology.PhaseProvisioning // not yet established
 	scheme := testScheme(t)
 
 	replicaPod := readyPod(cluster, testReplica2, roleReplica)

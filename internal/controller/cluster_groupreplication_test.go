@@ -217,6 +217,65 @@ func TestMergeGroupReplicationKeepsBootstrappedSticky(t *testing.T) {
 	}
 }
 
+func TestMergeGroupReplicationClampsObservedMaxOnScaleDown(t *testing.T) {
+	t.Parallel()
+	// A 5-member group that has been scaled down to 3: the sticky ObservedViewMax
+	// (5, the largest view ever seen) must be clamped to spec.Instances so the
+	// quorum denominator tracks the smaller group. Otherwise losing one of the
+	// three would falsely read as quorum-lost (2*2=4 <= 5).
+	cluster := grCluster(&mysqlv1alpha1.GroupReplicationStatus{
+		GroupName:         "group-uuid",
+		Bootstrapped:      true,
+		ObservedViewMax:   5,
+		ObservedOnlineMax: 5,
+	})
+	cluster.Spec.Instances = 3
+	online := func(i string) mysqlv1alpha1.GroupMember {
+		return mysqlv1alpha1.GroupMember{Instance: i, State: groupreplication.MemberStateOnline, Role: groupreplication.MemberRoleSecondary}
+	}
+	controllergr.NewReconciler(nil, nil).MergeStatus(cluster, topology.Observation{
+		GroupReplication: &mysqlv1alpha1.GroupReplicationStatus{
+			Members:           []mysqlv1alpha1.GroupMember{online("demo-1"), online("demo-2"), online("demo-3")},
+			ObservedViewMax:   3,
+			ObservedOnlineMax: 3,
+		},
+	})
+	gr := cluster.Status.GroupReplication
+	if gr.ObservedViewMax != 3 {
+		t.Fatalf("ObservedViewMax = %d, want clamped to 3", gr.ObservedViewMax)
+	}
+	if !gr.HasQuorum {
+		t.Fatal("a full 3-member group must be quorate after scale-down clamp")
+	}
+}
+
+// Restore into a fresh GR group: the bootstrap primary restores the physical
+// backup into its data dir (then bootstraps a fresh single-member group via the
+// in-Pod role strategy), while secondaries initialise an empty GR server and
+// provision via distributed recovery from that primary — never an async clone.
+func TestBootstrapArgsGroupReplicationRecovery(t *testing.T) {
+	t.Parallel()
+	cluster := grCluster(&mysqlv1alpha1.GroupReplicationStatus{GroupName: "g"})
+	cluster.Spec.Instances = 3
+	plan := testPlan()
+	plan.Instances = 3
+	plan.Recovery = &recoveryPlan{Bucket: "bkt", ArchiveKey: "clusters/demo/bk/", MetadataKey: "clusters/demo/bk/meta"}
+	r := &ClusterReconciler{}
+
+	primaryArgs := strings.Join(r.bootstrapArgs(cluster, plan, plan.instanceFor(cluster, 1)), " ")
+	if !strings.Contains(primaryArgs, "instance restore") || !strings.Contains(primaryArgs, "--bucket=bkt") {
+		t.Fatalf("GR recovery primary must restore from the object store, got: %s", primaryArgs)
+	}
+
+	secondaryArgs := strings.Join(r.bootstrapArgs(cluster, plan, plan.instanceFor(cluster, 2)), " ")
+	if !strings.Contains(secondaryArgs, "instance initdb") || !strings.Contains(secondaryArgs, "--group-replication") {
+		t.Fatalf("GR secondary must initialise an empty server for distributed recovery, got: %s", secondaryArgs)
+	}
+	if strings.Contains(secondaryArgs, "instance join") || strings.Contains(secondaryArgs, "instance restore") {
+		t.Fatalf("GR secondary must not async-clone or restore; it joins via distributed recovery, got: %s", secondaryArgs)
+	}
+}
+
 func TestEnsureGroupNameGeneratesAndIsSticky(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -298,7 +357,7 @@ func TestRenderMyCnfGroupReplicationBlock(t *testing.T) {
 	plan.Instances = 1
 	inst := plan.instanceFor(cluster, 1)
 
-	rendered, err := (&ClusterReconciler{}).renderMyCnf(cluster, plan, inst)
+	rendered, err := (&ClusterReconciler{}).renderMyCnf(cluster, plan, inst, plan.instanceNames(cluster))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,6 +376,42 @@ func TestRenderMyCnfGroupReplicationBlock(t *testing.T) {
 	// Async-only semi-sync settings must not appear under GR.
 	if strings.Contains(rendered, "rpl_semi_sync") {
 		t.Fatalf("GR config must not render semi-sync settings:\n%s", rendered)
+	}
+}
+
+// TestScaleDoesNotRollExistingMembers verifies that growing the group (3→5)
+// leaves an existing member's Pod template hash unchanged, so a scale-up no
+// longer rolls the healthy members. The seed list does change in the member's
+// actual rendered config (configHash), proving the seeds were normalised out of
+// the roll-triggering template hash only, not dropped from the real config.
+func TestScaleDoesNotRollExistingMembers(t *testing.T) {
+	t.Parallel()
+	cluster := grCluster(&mysqlv1alpha1.GroupReplicationStatus{GroupName: "group-uuid-123"})
+	reconciler := &ClusterReconciler{}
+
+	annotationsFor := func(instances int) map[string]string {
+		plan := testPlan()
+		plan.Instances = instances
+		plan.PrimaryName = instanceName(cluster, 1)
+		inst := plan.instanceFor(cluster, 1)
+		labels := labelsFor(cluster, inst.Name, roleOf(inst))
+		spec := reconciler.podSpec(cluster, plan, inst)
+		annotations, err := reconciler.podAnnotations(cluster, plan, inst, labels, spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return annotations
+	}
+
+	three := annotationsFor(3)
+	five := annotationsFor(5)
+
+	if three[podTemplateHashAnnotation] != five[podTemplateHashAnnotation] {
+		t.Fatalf("template hash changed on scale 3->5: %q vs %q (existing member would needlessly roll)",
+			three[podTemplateHashAnnotation], five[podTemplateHashAnnotation])
+	}
+	if three[configHashAnnotation] == five[configHashAnnotation] {
+		t.Fatal("config hash unchanged on scale 3->5: the seed list should differ in the actual config")
 	}
 }
 

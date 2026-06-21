@@ -30,11 +30,6 @@ import (
 	mysqlgr "github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/groupreplication"
 )
 
-const (
-	clientCAPath  = "/etc/cloudnative-mysql/tls/client-ca"
-	serverTLSPath = "/etc/cloudnative-mysql/tls/server"
-)
-
 // Name is the user-facing topology name used in reconciliation logs.
 func (r *Reconciler) Name() string { return "groupReplication" }
 
@@ -83,9 +78,9 @@ func (r *Reconciler) ConfigureServer(
 		ExitStateAction: tunables.ExitStateAction,
 		AutoRejoinTries: tunables.AutoRejoinTries,
 		RecoverySSL: mysqlconfig.TLSPaths{
-			CA:   clientCAPath + "/ca.crt",
-			Cert: serverTLSPath + "/tls.crt",
-			Key:  serverTLSPath + "/tls.key",
+			CA:   topology.ClientCAPath + "/ca.crt",
+			Cert: topology.ServerTLSPath + "/tls.crt",
+			Key:  topology.ServerTLSPath + "/tls.key",
 		},
 	}
 	config.SemiSync = mysqlconfig.SemiSync{}

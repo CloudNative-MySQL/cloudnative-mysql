@@ -34,6 +34,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
+	"github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/topology"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/user"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/webserver"
 )
@@ -107,6 +108,11 @@ const (
 	// comma-separated list of XCom addresses, instructs the in-Pod reconciler to
 	// execute group_replication_force_members with that address set.
 	forceQuorumMembersAnnotation = "cloudnative-mysql.cloudnative-mysql.io/force-quorum-members"
+	// forceGroupRebootstrapAnnotation, when set to "yes" on an instance Pod,
+	// instructs the in-Pod reconciler to re-bootstrap the group from that member
+	// after a total outage (no member survived ONLINE). It is the operator's
+	// guarded signal that this member holds every committed transaction.
+	forceGroupRebootstrapAnnotation = "cloudnative-mysql.cloudnative-mysql.io/force-group-rebootstrap"
 
 	configMapAnnotation       = "cloudnative-mysql.cloudnative-mysql.io/config-map"
 	configHashAnnotation      = "cloudnative-mysql.cloudnative-mysql.io/config-hash"
@@ -116,23 +122,11 @@ const (
 	conditionProgressing         = "Progressing"
 	conditionContinuousArchiving = "ContinuousArchiving"
 
-	phasePending        = "Pending"
-	phaseProvisioning   = "Provisioning"
-	phaseReady          = "Ready"
-	phaseBlocked        = "Blocked"
-	phaseSwitchover     = "Switchover"
-	phaseDegraded       = "Degraded"
-	phaseFailingOver    = "FailingOver"
-	phaseUpgrading      = "Upgrading"
-	phaseWaitingForUser = "WaitingForUser"
-
 	eventFailoverObserved = "FailoverObserved"
 
 	dataDir       = "/var/lib/mysql"
 	socketPath    = "/var/run/mysqld/mysqld.sock"
 	configPath    = "/etc/mysql/my.cnf"
-	serverTLSPath = "/etc/cloudnative-mysql/tls/server"
-	clientCAPath  = "/etc/cloudnative-mysql/tls/client-ca"
 	joinBackupDir = "/backup"
 
 	replicationUser = "cloudnative-mysql_repl"
@@ -242,7 +236,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if reason := unsupportedReason(cluster); reason != "" {
 		log.Info("Cluster shape is not supported by M3", "reason", reason)
 		return ctrl.Result{}, r.patchStatus(ctx, cluster, observedCluster{
-			Phase:       phaseBlocked,
+			Phase:       topology.PhaseBlocked,
 			PhaseReason: reason,
 			Ready:       false,
 			Progressing: false,
@@ -254,7 +248,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	plan, err := r.buildPlan(ctx, cluster)
 	if err != nil {
 		return ctrl.Result{}, r.patchStatus(ctx, cluster, observedCluster{
-			Phase:       phaseBlocked,
+			Phase:       topology.PhaseBlocked,
 			PhaseReason: err.Error(),
 			Ready:       false,
 			Progressing: false,
@@ -290,7 +284,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 	if !certsReady {
 		return ctrl.Result{RequeueAfter: provisioningRequeue}, r.patchStatus(ctx, cluster, observedCluster{
-			Phase:       phaseProvisioning,
+			Phase:       topology.PhaseProvisioning,
 			PhaseReason: "Waiting for cert-manager certificates",
 			Ready:       false,
 			Progressing: true,
@@ -433,7 +427,7 @@ func (r *ClusterReconciler) handleBackupCheck(ctx context.Context, cluster *mysq
 	if check.Retry != nil {
 		log.Info("Could not verify backup destination, will retry", "error", check.Retry.Error())
 		return ctrl.Result{RequeueAfter: provisioningRequeue}, r.patchStatus(ctx, cluster, observedCluster{
-			Phase:       phaseProvisioning,
+			Phase:       topology.PhaseProvisioning,
 			PhaseReason: "Verifying backup destination is empty",
 			Ready:       false,
 			Progressing: true,
@@ -444,7 +438,7 @@ func (r *ClusterReconciler) handleBackupCheck(ctx context.Context, cluster *mysq
 		log.Info("Blocking cluster: backup destination is not empty", "reason", check.Blocked)
 		r.Recorder.Event(cluster, corev1.EventTypeWarning, "BackupDestinationNotEmpty", check.Blocked)
 		return ctrl.Result{RequeueAfter: readyResync}, r.patchStatus(ctx, cluster, observedCluster{
-			Phase:       phaseBlocked,
+			Phase:       topology.PhaseBlocked,
 			PhaseReason: check.Blocked,
 			Ready:       false,
 			Progressing: false,
@@ -463,7 +457,7 @@ func (r *ClusterReconciler) handleRecoveryCheck(ctx context.Context, cluster *my
 	if check.Retry != nil {
 		log.Info("Could not verify recovery target, will retry", "error", check.Retry.Error())
 		return ctrl.Result{RequeueAfter: provisioningRequeue}, r.patchStatus(ctx, cluster, observedCluster{
-			Phase:       phaseProvisioning,
+			Phase:       topology.PhaseProvisioning,
 			PhaseReason: "Verifying recovery target is reachable from the archive",
 			Ready:       false,
 			Progressing: true,
@@ -474,7 +468,7 @@ func (r *ClusterReconciler) handleRecoveryCheck(ctx context.Context, cluster *my
 		log.Info("Blocking cluster: recovery target is unsatisfiable", "reason", check.Blocked)
 		r.Recorder.Event(cluster, corev1.EventTypeWarning, "RecoveryTargetUnsatisfiable", check.Blocked)
 		return ctrl.Result{RequeueAfter: readyResync}, r.patchStatus(ctx, cluster, observedCluster{
-			Phase:       phaseBlocked,
+			Phase:       topology.PhaseBlocked,
 			PhaseReason: check.Blocked,
 			Ready:       false,
 			Progressing: false,
@@ -495,7 +489,7 @@ func (r *ClusterReconciler) blockOnInvalidCertificate(ctx context.Context, clust
 			r.Recorder.Event(cluster, corev1.EventTypeWarning, "InvalidUserCertificate", err.Error())
 		}
 		return true, ctrl.Result{RequeueAfter: readyResync}, r.patchStatus(ctx, cluster, observedCluster{
-			Phase:       phaseBlocked,
+			Phase:       topology.PhaseBlocked,
 			PhaseReason: err.Error(),
 			Ready:       false,
 			Progressing: false,

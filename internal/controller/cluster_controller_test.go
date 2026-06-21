@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
+	"github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/topology"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/replication"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/user"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/webserver"
@@ -62,7 +63,7 @@ func testScheme(t *testing.T) *runtime.Scheme {
 func baseCluster() *mysqlv1alpha1.Cluster {
 	cluster := &mysqlv1alpha1.Cluster{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "demo",
+			Name:      scheduledTestCluster,
 			Namespace: "default",
 		},
 		Spec: mysqlv1alpha1.ClusterSpec{
@@ -526,7 +527,7 @@ func TestEnsurePodRecreatesWhenTemplateHashChanges(t *testing.T) {
 		Scheme: scheme,
 	}
 
-	if err := reconciler.ensurePod(ctx, cluster, plan, inst); err != nil {
+	if _, err := reconciler.ensurePod(ctx, cluster, plan, inst, true); err != nil {
 		t.Fatal(err)
 	}
 	got := &corev1.Pod{}
@@ -535,7 +536,7 @@ func TestEnsurePodRecreatesWhenTemplateHashChanges(t *testing.T) {
 		t.Fatalf("stale Pod get error = %v, want not found", err)
 	}
 
-	if err := reconciler.ensurePod(ctx, cluster, plan, inst); err != nil {
+	if _, err := reconciler.ensurePod(ctx, cluster, plan, inst, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: inst.Name}, got); err != nil {
@@ -617,7 +618,7 @@ func TestEnsurePodDoesNotRecreateForPrimaryRoleChange(t *testing.T) {
 
 	plan.PrimaryName = testReplica2
 	inst = plan.instanceFor(cluster, 1)
-	if err := reconciler.ensurePod(ctx, cluster, plan, inst); err != nil {
+	if _, err := reconciler.ensurePod(ctx, cluster, plan, inst, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -661,7 +662,7 @@ func TestEnsurePodPreservesFencingAnnotation(t *testing.T) {
 		Scheme: scheme,
 	}
 
-	if err := reconciler.ensurePod(ctx, cluster, plan, inst); err != nil {
+	if _, err := reconciler.ensurePod(ctx, cluster, plan, inst, true); err != nil {
 		t.Fatal(err)
 	}
 	got := &corev1.Pod{}
@@ -759,8 +760,8 @@ func TestReconcileBlocksUnsupportedClusterShape(t *testing.T) {
 	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}, got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Status.Phase != phaseBlocked {
-		t.Fatalf("phase = %q, want %q", got.Status.Phase, phaseBlocked)
+	if got.Status.Phase != topology.PhaseBlocked {
+		t.Fatalf("phase = %q, want %q", got.Status.Phase, topology.PhaseBlocked)
 	}
 	if !strings.Contains(got.Status.PhaseReason, "replica") {
 		t.Fatalf("phase reason = %q, want replica-cluster block", got.Status.PhaseReason)
@@ -772,11 +773,11 @@ func TestReconcileBlocksUnsupportedClusterShape(t *testing.T) {
 
 	select {
 	case event := <-recorder.Events:
-		if !strings.Contains(event, "Warning") || !strings.Contains(event, phaseBlocked) {
-			t.Fatalf("blocked event = %q, want Warning %s", event, phaseBlocked)
+		if !strings.Contains(event, "Warning") || !strings.Contains(event, topology.PhaseBlocked) {
+			t.Fatalf("blocked event = %q, want Warning %s", event, topology.PhaseBlocked)
 		}
 	default:
-		t.Fatalf("expected a Warning %s event", phaseBlocked)
+		t.Fatalf("expected a Warning %s event", topology.PhaseBlocked)
 	}
 }
 
@@ -880,8 +881,8 @@ func TestReconcileBootstrapsSingleInstanceToReady(t *testing.T) {
 	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}, got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Status.Phase != phaseReady {
-		t.Fatalf("phase = %q, want %q", got.Status.Phase, phaseReady)
+	if got.Status.Phase != topology.PhaseReady {
+		t.Fatalf("phase = %q, want %q", got.Status.Phase, topology.PhaseReady)
 	}
 	if got.Status.CurrentPrimary != primaryName {
 		t.Fatalf("current primary = %q, want %s", got.Status.CurrentPrimary, primaryName)
@@ -900,8 +901,8 @@ func TestReconcileBootstrapsSingleInstanceToReady(t *testing.T) {
 		t.Fatalf("ready condition = %#v, want True", ready)
 	}
 
-	if !drainEvents(recorder.Events, phaseReady) {
-		t.Fatalf("expected a %q phase-transition event", phaseReady)
+	if !drainEvents(recorder.Events, topology.PhaseReady) {
+		t.Fatalf("expected a %q phase-transition event", topology.PhaseReady)
 	}
 
 	// A steady-state resync with no phase change must not emit another event.
@@ -972,7 +973,7 @@ func assertOwnedObject(t *testing.T, ctx context.Context, reconciler *ClusterRec
 	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: "default", Name: name}, obj); err != nil {
 		t.Fatal(err)
 	}
-	if len(obj.GetOwnerReferences()) != 1 || obj.GetOwnerReferences()[0].Name != "demo" {
+	if len(obj.GetOwnerReferences()) != 1 || obj.GetOwnerReferences()[0].Name != scheduledTestCluster {
 		t.Fatalf("%T owner refs = %#v, want demo owner", obj, obj.GetOwnerReferences())
 	}
 }
@@ -991,7 +992,7 @@ func assertOwnedUnstructuredResource(
 	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: "default", Name: name}, obj); err != nil {
 		t.Fatalf("%s %s: %v", resourceName, name, err)
 	}
-	if len(obj.GetOwnerReferences()) != 1 || obj.GetOwnerReferences()[0].Name != "demo" {
+	if len(obj.GetOwnerReferences()) != 1 || obj.GetOwnerReferences()[0].Name != scheduledTestCluster {
 		t.Fatalf("%s owner refs = %#v, want demo owner", resourceName, obj.GetOwnerReferences())
 	}
 }
@@ -1050,8 +1051,8 @@ func TestReconcileSwitchoverWaitsForInstancePromotion(t *testing.T) {
 	if got.Status.TargetPrimaryTimestamp == "" {
 		t.Fatal("targetPrimaryTimestamp should be stamped")
 	}
-	if got.Status.Phase != phaseSwitchover {
-		t.Fatalf("phase = %q, want %q", got.Status.Phase, phaseSwitchover)
+	if got.Status.Phase != topology.PhaseSwitchover {
+		t.Fatalf("phase = %q, want %q", got.Status.Phase, topology.PhaseSwitchover)
 	}
 }
 
@@ -1089,7 +1090,7 @@ func TestReconcileSwitchoverDoesNotBlockBootstrapTarget(t *testing.T) {
 	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}, got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Status.Phase == phaseBlocked {
+	if got.Status.Phase == topology.PhaseBlocked {
 		t.Fatalf("phase = %q, want bootstrap to keep waiting for currentPrimary", got.Status.Phase)
 	}
 	if got.Status.TargetPrimary != testPrimary {
@@ -1136,8 +1137,8 @@ func TestReconcileSwitchoverBlocksUnhealthyTarget(t *testing.T) {
 	if err := reconciler.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}, got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Status.Phase != phaseBlocked {
-		t.Fatalf("phase = %q, want %q", got.Status.Phase, phaseBlocked)
+	if got.Status.Phase != topology.PhaseBlocked {
+		t.Fatalf("phase = %q, want %q", got.Status.Phase, topology.PhaseBlocked)
 	}
 }
 
