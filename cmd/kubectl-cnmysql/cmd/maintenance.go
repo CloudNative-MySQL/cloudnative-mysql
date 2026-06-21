@@ -50,10 +50,10 @@ func newMaintenanceCommand() *cobra.Command {
 func newMaintenanceSetCommand() *cobra.Command {
 	var reusePVC bool
 	cmd := &cobra.Command{
-		Use:               "set [CLUSTER]",
-		Short:             "Begin a node maintenance window",
-		Long:              "Set spec.nodeMaintenanceWindow.inProgress to true. While the maintenance window is active, the operator tolerates node drains. Use --reuse-pvc to reattach existing PVCs to rescheduled Pods instead of re-cloning from backup.",
-		Example:           `  kubectl cnmysql maintenance set cluster-sample
+		Use:   "set [CLUSTER]",
+		Short: "Begin a node maintenance window",
+		Long:  "Set spec.nodeMaintenanceWindow.inProgress to true. While the maintenance window is active, the operator tolerates node drains. Use --reuse-pvc to reattach existing PVCs to rescheduled Pods instead of re-cloning from backup.",
+		Example: `  kubectl cnmysql maintenance set cluster-sample
   kubectl cnmysql maintenance set cluster-sample --reuse-pvc`,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeClusterArg,

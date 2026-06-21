@@ -91,9 +91,9 @@ func newUserCreateCommand() *cobra.Command {
 		requireTLS  string
 	)
 	cmd := &cobra.Command{
-		Use:               "create [CLUSTER] --name=USER",
-		Short:             "Create a MySQL user",
-		Long:              "Create a new MySQL user on the cluster's primary. Passwords are read from stdin (--password-stdin) or prompted on the terminal. Use --superuser for ALL PRIVILEGES, or --privileges for specific grants.",
+		Use:   "create [CLUSTER] --name=USER",
+		Short: "Create a MySQL user",
+		Long:  "Create a new MySQL user on the cluster's primary. Passwords are read from stdin (--password-stdin) or prompted on the terminal. Use --superuser for ALL PRIVILEGES, or --privileges for specific grants.",
 		Example: `  # Create a user (prompts for password)
   kubectl cnmysql user create cluster-sample --name=app
 
@@ -162,9 +162,9 @@ func newUserAlterCommand() *cobra.Command {
 		requireTLS  string
 	)
 	cmd := &cobra.Command{
-		Use:               "alter [CLUSTER] --name=USER",
-		Short:             "Alter a MySQL user's password or TLS requirement",
-		Long:              "Alter a MySQL user's password, TLS requirement, or both. The new password is read from stdin (--password-stdin) or prompted on the terminal.",
+		Use:   "alter [CLUSTER] --name=USER",
+		Short: "Alter a MySQL user's password or TLS requirement",
+		Long:  "Alter a MySQL user's password, TLS requirement, or both. The new password is read from stdin (--password-stdin) or prompted on the terminal.",
 		Example: `  # Change a user's password (prompts)
   kubectl cnmysql user alter cluster-sample --name=app
 
@@ -217,9 +217,9 @@ func newUserAlterCommand() *cobra.Command {
 func newUserDropCommand() *cobra.Command {
 	var host string
 	cmd := &cobra.Command{
-		Use:               "drop [CLUSTER] --name=USER",
-		Short:             "Drop a MySQL user",
-		Long:              "Drop a MySQL user from the cluster's primary. Reserved operator accounts (cloudnative-mysql_*) cannot be dropped.",
+		Use:   "drop [CLUSTER] --name=USER",
+		Short: "Drop a MySQL user",
+		Long:  "Drop a MySQL user from the cluster's primary. Reserved operator accounts (cloudnative-mysql_*) cannot be dropped.",
 		Example: `  # Drop a user
   kubectl cnmysql user drop cluster-sample --name=app`,
 		Args:              cobra.MaximumNArgs(1),
@@ -252,9 +252,9 @@ func newUserDropCommand() *cobra.Command {
 
 func newUserListCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:               "list [CLUSTER]",
-		Short:             "List managed MySQL users",
-		Long:              "List all managed MySQL users on the cluster's primary, with their host patterns, TLS requirements and grants.",
+		Use:   "list [CLUSTER]",
+		Short: "List managed MySQL users",
+		Long:  "List all managed MySQL users on the cluster's primary, with their host patterns, TLS requirements and grants.",
 		Example: `  # List users
   kubectl cnmysql user list cluster-sample`,
 		Args:              cobra.MaximumNArgs(1),

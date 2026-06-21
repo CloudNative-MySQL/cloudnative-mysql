@@ -51,10 +51,10 @@ func newDatabaseCommand() *cobra.Command {
 func newDatabaseCreateCommand() *cobra.Command {
 	var charset, collation string
 	cmd := &cobra.Command{
-		Use:               "create [CLUSTER] --name=DB",
-		Short:             "Create a MySQL database",
-		Long:              "Create a new MySQL database on the cluster's primary. Optionally specify a character set and collation.",
-		Example:           `  # Create a database on the default cluster
+		Use:   "create [CLUSTER] --name=DB",
+		Short: "Create a MySQL database",
+		Long:  "Create a new MySQL database on the cluster's primary. Optionally specify a character set and collation.",
+		Example: `  # Create a database on the default cluster
   kubectl cnmysql database create --name=analytics
 
   # Create with custom charset and collation on a specific cluster
@@ -88,10 +88,10 @@ func newDatabaseCreateCommand() *cobra.Command {
 
 func newDatabaseDropCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "drop [CLUSTER] --name=DB",
-		Short:             "Drop a MySQL database",
-		Long:              "Drop a MySQL database from the cluster's primary. MySQL system databases (mysql, information_schema, performance_schema, sys) cannot be dropped.",
-		Example:           `  # Drop a database
+		Use:   "drop [CLUSTER] --name=DB",
+		Short: "Drop a MySQL database",
+		Long:  "Drop a MySQL database from the cluster's primary. MySQL system databases (mysql, information_schema, performance_schema, sys) cannot be dropped.",
+		Example: `  # Drop a database
   kubectl cnmysql database drop cluster-sample --name=analytics`,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeClusterArg,
@@ -122,10 +122,10 @@ func newDatabaseDropCommand() *cobra.Command {
 
 func newDatabaseListCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:               "list [CLUSTER]",
-		Short:             "List user-managed MySQL databases",
-		Long:              "List all user-managed databases on the cluster's primary. System databases are excluded.",
-		Example:           `  # List databases
+		Use:   "list [CLUSTER]",
+		Short: "List user-managed MySQL databases",
+		Long:  "List all user-managed databases on the cluster's primary. System databases are excluded.",
+		Example: `  # List databases
   kubectl cnmysql database list cluster-sample`,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeClusterArg,
