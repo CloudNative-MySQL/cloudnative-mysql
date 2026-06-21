@@ -331,6 +331,12 @@ func (r *ClusterReconciler) ensurePod(ctx context.Context, cluster *mysqlv1alpha
 	if v, ok := pod.Annotations[fencingAnnotation]; ok {
 		annotations[fencingAnnotation] = v
 	}
+	// The group-observation doorbell is published by the in-Pod reconciler on its
+	// own Pod. Preserve it so ensurePod does not erase it between doorbell rings
+	// and cause a reconcile storm.
+	if v, ok := pod.Annotations[groupObservationAnnotation]; ok {
+		annotations[groupObservationAnnotation] = v
+	}
 	if pod.Annotations[podTemplateHashAnnotation] != annotations[podTemplateHashAnnotation] {
 		if !allowRoll {
 			// The Pod needs a template change but rolling it is deferred (the primary

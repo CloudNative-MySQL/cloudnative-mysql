@@ -114,6 +114,12 @@ const (
 	// guarded signal that this member holds every committed transaction.
 	forceGroupRebootstrapAnnotation = "cloudnative-mysql.cloudnative-mysql.io/force-group-rebootstrap"
 
+	// groupObservationAnnotation is published by the in-Pod reconciler as a
+	// doorbell on the instance Pod whenever its locally observed Group Replication
+	// snapshot changes. The operator must preserve it across ensurePod patches so
+	// it is not lost between in-Pod manager updates.
+	groupObservationAnnotation = "mysql.cloudnative-mysql.io/gr-observed"
+
 	configMapAnnotation       = "cloudnative-mysql.cloudnative-mysql.io/config-map"
 	configHashAnnotation      = "cloudnative-mysql.cloudnative-mysql.io/config-hash"
 	podTemplateHashAnnotation = "cloudnative-mysql.cloudnative-mysql.io/pod-template-hash"
