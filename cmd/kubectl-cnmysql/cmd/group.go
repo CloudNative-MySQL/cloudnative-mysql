@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"time"
 
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -47,32 +46,8 @@ func newGroupCommand() *cobra.Command {
 }
 
 func newGroupStatusCommand() *cobra.Command {
-	var (
-		output   string
-		watch    bool
-		interval time.Duration
-	)
-	cmd := &cobra.Command{
-		Use:               "status [CLUSTER]",
-		Short:             "Show the live group view: members, roles and quorum",
-		Args:              cobra.MaximumNArgs(1),
-		ValidArgsFunction: completeClusterArg,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			clusterName := firstArg(args)
-			label := clusterName
-			if label == "" {
-				label = "<default cluster>"
-			}
-			return watchOrOnce(cmd.Context(), watch, "group status "+label, interval,
-				func(ctx context.Context) error {
-					return runGroupStatus(ctx, clusterName, output)
-				})
-		},
-	}
-	cmd.Flags().StringVarP(&output, "output", "o", "", "output format: json or yaml (default human-readable)")
-	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "continuously refresh until interrupted")
-	cmd.Flags().DurationVar(&interval, "watch-interval", defaultWatchInterval, "refresh interval for --watch")
-	return cmd
+	return newWatchingCommand("status [CLUSTER]", "Show the live group view: members, roles and quorum",
+		"group status ", runGroupStatus)
 }
 
 func runGroupStatus(ctx context.Context, clusterName, output string) error {

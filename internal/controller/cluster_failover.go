@@ -19,9 +19,7 @@ package controller
 import (
 	"context"
 
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/topology"
@@ -70,16 +68,5 @@ func (r *ClusterReconciler) updateStatus(
 	cluster *mysqlv1alpha1.Cluster,
 	mutate func(*mysqlv1alpha1.ClusterStatus),
 ) error {
-	latest := &mysqlv1alpha1.Cluster{}
-	key := types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}
-	if err := r.Get(ctx, key, latest); err != nil {
-		return err
-	}
-	before := latest.DeepCopy()
-	mutate(&latest.Status)
-	if err := r.Status().Patch(ctx, latest, client.MergeFrom(before)); err != nil {
-		return err
-	}
-	latest.Status.DeepCopyInto(&cluster.Status)
-	return nil
+	return topology.PatchClusterStatus(ctx, r.Client, cluster, mutate)
 }

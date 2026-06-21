@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
+	"github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/topology"
 )
 
 // reconcileUpgrade drives a serialized, primary-last operator upgrade rollout
@@ -94,7 +95,7 @@ func (r *ClusterReconciler) reconcileUpgrade(
 		logf.FromContext(ctx).Info("Primary instance manager is stale, waiting for user",
 			"instance", observed.PrimaryName, "strategy", "supervised")
 		return true, reconcile.Result{RequeueAfter: readyResync}, r.patchStatus(ctx, cluster, upgradeProgressStatus(
-			phaseWaitingForUser,
+			topology.PhaseWaitingForUser,
 			"Primary instance manager is stale (operator upgrade); waiting for user to trigger the update",
 			plan, observed))
 	}
@@ -147,7 +148,7 @@ func (r *ClusterReconciler) rollInstanceForUpgrade(
 
 	reason := upgradeReason("Upgrading instance manager on", instance.Name, len(candidates))
 	return true, reconcile.Result{RequeueAfter: provisioningRequeue}, r.patchStatus(ctx, cluster,
-		upgradeProgressStatus(phaseUpgrading, reason, plan, observed))
+		upgradeProgressStatus(topology.PhaseUpgrading, reason, plan, observed))
 }
 
 // upgradeInstanceInPlace streams the operator's own manager binary to the
@@ -184,7 +185,7 @@ func (r *ClusterReconciler) upgradeInstanceInPlace(
 
 	reason := upgradeReason("Upgrading instance manager in place on", instance.Name, len(candidates))
 	return true, reconcile.Result{RequeueAfter: provisioningRequeue}, r.patchStatus(ctx, cluster,
-		upgradeProgressStatus(phaseUpgrading, reason, plan, observed))
+		upgradeProgressStatus(topology.PhaseUpgrading, reason, plan, observed))
 }
 
 // operatorBinary opens the operator's own manager binary for streaming to an
@@ -234,7 +235,7 @@ func (r *ClusterReconciler) upgradePrimaryViaSwitchover(
 	}
 
 	return true, reconcile.Result{RequeueAfter: provisioningRequeue}, r.patchStatus(ctx, cluster, upgradeProgressStatus(
-		phaseUpgrading,
+		topology.PhaseUpgrading,
 		fmt.Sprintf("Upgrading: switching over to %s before upgrading the primary", target),
 		plan, observed))
 }

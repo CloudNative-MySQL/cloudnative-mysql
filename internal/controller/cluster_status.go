@@ -176,18 +176,18 @@ func (r *ClusterReconciler) observe(ctx context.Context, cluster *mysqlv1alpha1.
 	observed.Progressing = !observed.Ready
 
 	if isQuorumLost(cluster, observed) {
-		observed.Phase = phaseBlocked
+		observed.Phase = topology.PhaseBlocked
 		observed.PhaseReason = "group has lost quorum; manual recovery required"
 		observed.Ready = false
 		observed.Progressing = false
 	} else {
 		switch {
 		case len(observed.DivergedInstances) > 0:
-			observed.Phase = phaseDegraded
+			observed.Phase = topology.PhaseDegraded
 			observed.PhaseReason = fmt.Sprintf("replica(s) diverged from primary %s and cannot safely rejoin: %s",
 				observed.PrimaryName, strings.Join(observed.DivergedInstances, ", "))
 		case observed.Ready:
-			observed.Phase = phaseReady
+			observed.Phase = topology.PhaseReady
 			observed.PhaseReason = "All instances are ready"
 		case len(observed.FailedInstances) > 0 || len(observed.ReplicationBrokenInstances) > 0:
 			// Positive evidence of a problem, not setup still in progress: a Pod that
@@ -196,7 +196,7 @@ func (r *ClusterReconciler) observe(ctx context.Context, cluster *mysqlv1alpha1.
 			// thread). Surface it as Degraded regardless of whether the cluster ever
 			// finished provisioning, so a cluster that wedges during initial bring-up
 			// does not sit silently in "Provisioning" forever.
-			observed.Phase = phaseDegraded
+			observed.Phase = topology.PhaseDegraded
 			observed.PhaseReason = degradedReason(observed, plan)
 		case cluster.IsEstablished():
 			// The cluster has already completed initial provisioning (it reached a
@@ -206,13 +206,13 @@ func (r *ClusterReconciler) observe(ctx context.Context, cluster *mysqlv1alpha1.
 			// name the lagging instances so an operator can see what is wrong (e.g. a
 			// partitioned or crashed node) instead of it silently sitting in
 			// "Provisioning" or "Pending".
-			observed.Phase = phaseDegraded
+			observed.Phase = topology.PhaseDegraded
 			observed.PhaseReason = degradedReason(observed, plan)
 		case observed.ReadyInstances == 0:
-			observed.Phase = phasePending
+			observed.Phase = topology.PhasePending
 			observed.PhaseReason = "Waiting for the primary instance"
 		default:
-			observed.Phase = phaseProvisioning
+			observed.Phase = topology.PhaseProvisioning
 			observed.PhaseReason = fmt.Sprintf("%d/%d instances ready", observed.ReadyInstances, plan.Instances)
 		}
 	}
@@ -225,7 +225,7 @@ func (r *ClusterReconciler) observe(ctx context.Context, cluster *mysqlv1alpha1.
 // establishment is recorded directly when the cluster first becomes Ready.
 func establishedPhase(phase string) bool {
 	switch phase {
-	case "", phasePending, phaseProvisioning:
+	case "", topology.PhasePending, topology.PhaseProvisioning:
 		return false
 	default:
 		return true
@@ -454,7 +454,7 @@ func (r *ClusterReconciler) patchStatus(ctx context.Context, cluster *mysqlv1alp
 			"reason", observed.PhaseReason, "readyInstances", observed.ReadyInstances)
 	}
 	r.recordPhaseTransition(latest, before.Status.Phase, observed)
-	if observed.Phase == phaseBlocked && latest.IsGroupReplication() &&
+	if observed.Phase == topology.PhaseBlocked && latest.IsGroupReplication() &&
 		latest.Status.GroupReplication != nil && !latest.Status.GroupReplication.HasQuorum {
 		if r.Recorder != nil {
 			r.Recorder.Event(latest, corev1.EventTypeWarning, "QuorumLost",
@@ -547,7 +547,7 @@ func (r *ClusterReconciler) recordPhaseTransition(cluster *mysqlv1alpha1.Cluster
 		return
 	}
 	eventType := corev1.EventTypeNormal
-	if observed.Phase == phaseBlocked || observed.Phase == phaseDegraded {
+	if observed.Phase == topology.PhaseBlocked || observed.Phase == topology.PhaseDegraded {
 		eventType = corev1.EventTypeWarning
 	}
 	r.Recorder.Event(cluster, eventType, observed.Phase, observed.PhaseReason)

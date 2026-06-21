@@ -155,9 +155,9 @@ func (r *ClusterReconciler) renderMyCnf(cluster *mysqlv1alpha1.Cluster, plan clu
 		// TLS. Whether to require it is left to the user (require_secure_transport
 		// is no longer operator-managed).
 		TLS: mysqlconfig.TLSPaths{
-			CA:   clientCAPath + "/ca.crt",
-			Cert: serverTLSPath + "/tls.crt",
-			Key:  serverTLSPath + "/tls.key",
+			CA:   topology.ClientCAPath + "/ca.crt",
+			Cert: topology.ServerTLSPath + "/tls.crt",
+			Key:  topology.ServerTLSPath + "/tls.key",
 		},
 		UserParameters: cluster.Spec.MySQL.Parameters,
 		Archiving:      archivingConfig(cluster),

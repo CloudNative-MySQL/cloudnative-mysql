@@ -31,6 +31,7 @@ import (
 
 	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
 	controllergr "github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/groupreplication"
+	"github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/topology"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/webserver"
 )
 
@@ -59,12 +60,12 @@ func TestClusterEstablished(t *testing.T) {
 	// cluster that was once ready stays established even after its phase is
 	// re-stamped back to Provisioning by an intermediate reconcile step.
 	notEstablished := &mysqlv1alpha1.Cluster{}
-	notEstablished.Status.Phase = phaseReady // phase alone must not count
+	notEstablished.Status.Phase = topology.PhaseReady // phase alone must not count
 	if notEstablished.IsEstablished() {
 		t.Error("clusterEstablished with no EstablishedAt = true, want false")
 	}
 	established := &mysqlv1alpha1.Cluster{}
-	established.Status.Phase = phaseProvisioning // phase says provisioning...
+	established.Status.Phase = topology.PhaseProvisioning // phase says provisioning...
 	established.Status.EstablishedAt = &metav1.Time{Time: time.Now()}
 	if !established.IsEstablished() {
 		t.Error("clusterEstablished with EstablishedAt set = false, want true")
@@ -74,14 +75,14 @@ func TestClusterEstablished(t *testing.T) {
 func TestEstablishedPhase(t *testing.T) {
 	t.Parallel()
 	tests := map[string]bool{
-		"":                false,
-		phasePending:      false,
-		phaseProvisioning: false,
-		phaseReady:        true,
-		phaseDegraded:     true,
-		phaseSwitchover:   true,
-		phaseFailingOver:  true,
-		phaseBlocked:      true,
+		"":                         false,
+		topology.PhasePending:      false,
+		topology.PhaseProvisioning: false,
+		topology.PhaseReady:        true,
+		topology.PhaseDegraded:     true,
+		topology.PhaseSwitchover:   true,
+		topology.PhaseFailingOver:  true,
+		topology.PhaseBlocked:      true,
 	}
 	for phase, want := range tests {
 		if got := establishedPhase(phase); got != want {
@@ -165,9 +166,9 @@ func observePartitionedReplica(t *testing.T, previousPhase string) observedClust
 
 func TestObserveEstablishedClusterDegradesWhenInstanceUnreachable(t *testing.T) {
 	t.Parallel()
-	observed := observePartitionedReplica(t, phaseReady)
-	if observed.Phase != phaseDegraded {
-		t.Fatalf("phase = %q, want %q", observed.Phase, phaseDegraded)
+	observed := observePartitionedReplica(t, topology.PhaseReady)
+	if observed.Phase != topology.PhaseDegraded {
+		t.Fatalf("phase = %q, want %q", observed.Phase, topology.PhaseDegraded)
 	}
 	if !strings.Contains(observed.PhaseReason, testReplica2) {
 		t.Fatalf("phaseReason = %q, want it to name the unreachable instance %q", observed.PhaseReason, testReplica2)
@@ -180,7 +181,7 @@ func TestObserveEstablishedClusterDegradesOnTotalOutage(t *testing.T) {
 	cluster := baseCluster()
 	cluster.Spec.Instances = 1
 	cluster.Status.CurrentPrimary = testPrimary
-	cluster.Status.Phase = phaseReady
+	cluster.Status.Phase = topology.PhaseReady
 	cluster.Status.EstablishedAt = &metav1.Time{Time: time.Now()}
 	scheme := testScheme(t)
 
@@ -211,8 +212,8 @@ func TestObserveEstablishedClusterDegradesOnTotalOutage(t *testing.T) {
 	}
 	// A fully-down established cluster must read Degraded, not "Pending: waiting
 	// for the primary instance" (which implies it is still being provisioned).
-	if observed.Phase != phaseDegraded {
-		t.Fatalf("phase = %q, want %q", observed.Phase, phaseDegraded)
+	if observed.Phase != topology.PhaseDegraded {
+		t.Fatalf("phase = %q, want %q", observed.Phase, topology.PhaseDegraded)
 	}
 	if !strings.Contains(observed.PhaseReason, testPrimary) {
 		t.Fatalf("phaseReason = %q, want it to name the unreachable instance %q", observed.PhaseReason, testPrimary)
@@ -249,8 +250,8 @@ func TestObserveBootstrappingClusterStaysPending(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if observed.Phase != phasePending {
-		t.Fatalf("phase = %q, want %q", observed.Phase, phasePending)
+	if observed.Phase != topology.PhasePending {
+		t.Fatalf("phase = %q, want %q", observed.Phase, topology.PhasePending)
 	}
 }
 
@@ -258,9 +259,9 @@ func TestObserveProvisioningClusterStaysProvisioning(t *testing.T) {
 	t.Parallel()
 	// A cluster still completing initial provisioning must not be reported as
 	// Degraded just because not every instance is ready yet.
-	observed := observePartitionedReplica(t, phaseProvisioning)
-	if observed.Phase != phaseProvisioning {
-		t.Fatalf("phase = %q, want %q", observed.Phase, phaseProvisioning)
+	observed := observePartitionedReplica(t, topology.PhaseProvisioning)
+	if observed.Phase != topology.PhaseProvisioning {
+		t.Fatalf("phase = %q, want %q", observed.Phase, topology.PhaseProvisioning)
 	}
 }
 
@@ -288,7 +289,7 @@ func TestObserveCrashloopingInstanceDegradesBeforeEstablished(t *testing.T) {
 	// Never established: the cluster is still in its initial provisioning phase
 	// and EstablishedAt is unset. A crashlooping instance must still surface as
 	// Degraded rather than sitting silently in Provisioning.
-	cluster.Status.Phase = phaseProvisioning
+	cluster.Status.Phase = topology.PhaseProvisioning
 	scheme := testScheme(t)
 
 	primaryPod := readyPod(cluster, testPrimary, rolePrimary)
@@ -322,8 +323,8 @@ func TestObserveCrashloopingInstanceDegradesBeforeEstablished(t *testing.T) {
 	if len(observed.FailedInstances) != 1 || observed.FailedInstances[0] != testReplica2 {
 		t.Fatalf("failedInstances = %v, want [%s]", observed.FailedInstances, testReplica2)
 	}
-	if observed.Phase != phaseDegraded {
-		t.Fatalf("phase = %q, want %q", observed.Phase, phaseDegraded)
+	if observed.Phase != topology.PhaseDegraded {
+		t.Fatalf("phase = %q, want %q", observed.Phase, topology.PhaseDegraded)
 	}
 	if !strings.Contains(observed.PhaseReason, testReplica2) {
 		t.Fatalf("phaseReason = %q, want it to name the failing instance %q", observed.PhaseReason, testReplica2)
@@ -353,7 +354,7 @@ func TestObserveBrokenReplicationDegradesBeforeEstablished(t *testing.T) {
 	// Never established: still in initial provisioning. A replica whose replication
 	// has aborted with an error is positive evidence of a fault and must surface as
 	// Degraded rather than sitting silently in Provisioning.
-	cluster.Status.Phase = phaseProvisioning
+	cluster.Status.Phase = topology.PhaseProvisioning
 	scheme := testScheme(t)
 
 	primaryPod := readyPod(cluster, testPrimary, rolePrimary)
@@ -405,8 +406,8 @@ func TestObserveBrokenReplicationDegradesBeforeEstablished(t *testing.T) {
 	if len(observed.DivergedInstances) != 0 {
 		t.Fatalf("divergedInstances = %v, want none (GTID not diverged)", observed.DivergedInstances)
 	}
-	if observed.Phase != phaseDegraded {
-		t.Fatalf("phase = %q, want %q", observed.Phase, phaseDegraded)
+	if observed.Phase != topology.PhaseDegraded {
+		t.Fatalf("phase = %q, want %q", observed.Phase, topology.PhaseDegraded)
 	}
 	if !strings.Contains(observed.PhaseReason, testReplica2) || !strings.Contains(observed.PhaseReason, "1062") {
 		t.Fatalf("phaseReason = %q, want it to name %q and the replication error", observed.PhaseReason, testReplica2)
@@ -419,7 +420,7 @@ func TestObserveDivergedReplicaDetectedWhenNotReady(t *testing.T) {
 	cluster := baseCluster()
 	cluster.Spec.Instances = 2
 	cluster.Status.CurrentPrimary = testPrimary
-	cluster.Status.Phase = phaseProvisioning
+	cluster.Status.Phase = topology.PhaseProvisioning
 	scheme := testScheme(t)
 
 	primaryPod := readyPod(cluster, testPrimary, rolePrimary)
@@ -463,8 +464,8 @@ func TestObserveDivergedReplicaDetectedWhenNotReady(t *testing.T) {
 	if len(observed.DivergedInstances) != 1 || observed.DivergedInstances[0] != testReplica2 {
 		t.Fatalf("divergedInstances = %v, want [%s]", observed.DivergedInstances, testReplica2)
 	}
-	if observed.Phase != phaseDegraded {
-		t.Fatalf("phase = %q, want %q", observed.Phase, phaseDegraded)
+	if observed.Phase != topology.PhaseDegraded {
+		t.Fatalf("phase = %q, want %q", observed.Phase, topology.PhaseDegraded)
 	}
 }
 
@@ -487,7 +488,7 @@ func TestPatchStatusEstablishedAtIsSticky(t *testing.T) {
 	if err := reconciler.patchStatus(ctx, cluster, observedCluster{
 		Plan:           plan,
 		InstanceNames:  []string{testPrimary},
-		Phase:          phaseReady,
+		Phase:          topology.PhaseReady,
 		Ready:          true,
 		ReadyInstances: 1,
 	}); err != nil {
@@ -507,7 +508,7 @@ func TestPatchStatusEstablishedAtIsSticky(t *testing.T) {
 	if err := reconciler.patchStatus(ctx, got, observedCluster{
 		Plan:           plan,
 		InstanceNames:  []string{testPrimary},
-		Phase:          phaseProvisioning,
+		Phase:          topology.PhaseProvisioning,
 		Ready:          false,
 		ReadyInstances: 0,
 	}); err != nil {
@@ -538,7 +539,7 @@ func TestPatchStatusEmitsObservedGroupFailover(t *testing.T) {
 	})
 	cluster.Status.CurrentPrimary = testPrimary
 	cluster.Status.TargetPrimary = testPrimary
-	cluster.Status.Phase = phaseReady
+	cluster.Status.Phase = topology.PhaseReady
 	cluster.Spec.Instances = 3
 	scheme := testScheme(t)
 	recorder := record.NewFakeRecorder(2)
@@ -554,7 +555,7 @@ func TestPatchStatusEmitsObservedGroupFailover(t *testing.T) {
 	err := reconciler.patchStatus(ctx, cluster, observedCluster{
 		Plan:          plan,
 		InstanceNames: []string{testPrimary, testReplica2, testReplica3},
-		Phase:         phaseReady,
+		Phase:         topology.PhaseReady,
 		Ready:         true,
 		GroupReplication: &mysqlv1alpha1.GroupReplicationStatus{
 			PrimaryMember: testReplica2,

@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
+	"github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/topology"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/webserver"
 )
 
@@ -436,8 +437,8 @@ func TestReconcileUpgradeSupervisedWaitsForUserOnStalePrimary(t *testing.T) {
 	if missing := anyPodMissing(t, reconciler, cluster, observed.InstanceNames); missing != "" {
 		t.Fatalf("supervised upgrade rolled Pod %q, want no Pod deleted", missing)
 	}
-	if phase := clusterPhase(t, reconciler, cluster); phase != phaseWaitingForUser {
-		t.Fatalf("phase = %q, want %q", phase, phaseWaitingForUser)
+	if phase := clusterPhase(t, reconciler, cluster); phase != topology.PhaseWaitingForUser {
+		t.Fatalf("phase = %q, want %q", phase, topology.PhaseWaitingForUser)
 	}
 }
 
@@ -458,7 +459,7 @@ func TestReconcileUpgradeSupervisedRollsReplicasWhilePrimaryCurrent(t *testing.T
 	if !handled {
 		t.Fatal("stale replica should be rolled even under supervised")
 	}
-	if phase := clusterPhase(t, reconciler, cluster); phase == phaseWaitingForUser {
+	if phase := clusterPhase(t, reconciler, cluster); phase == topology.PhaseWaitingForUser {
 		t.Fatal("should not wait for user when only replicas are stale")
 	}
 	if missing := anyPodMissing(t, reconciler, cluster, observed.InstanceNames); missing != testReplica2 {
@@ -481,7 +482,7 @@ func TestReconcileUpgradeSingleInstanceSupervisedRestartsInPlace(t *testing.T) {
 	if !handled {
 		t.Fatal("single-instance supervised primary should be rolled in place")
 	}
-	if phase := clusterPhase(t, reconciler, cluster); phase == phaseWaitingForUser {
+	if phase := clusterPhase(t, reconciler, cluster); phase == topology.PhaseWaitingForUser {
 		t.Fatal("single-instance supervised primary must not wait for user")
 	}
 	if missing := anyPodMissing(t, reconciler, cluster, observed.InstanceNames); missing != testPrimary {
@@ -573,7 +574,7 @@ func TestReconcileUpgradeInPlaceIgnoresSupervisedGate(t *testing.T) {
 	if !handled {
 		t.Fatal("in-place stale primary should be handled, not left waiting")
 	}
-	if phase := clusterPhase(t, reconciler, cluster); phase == phaseWaitingForUser {
+	if phase := clusterPhase(t, reconciler, cluster); phase == topology.PhaseWaitingForUser {
 		t.Fatal("in-place upgrade must not wait for user on a supervised primary")
 	}
 	if !equalStrings(rec.upgraded, []string{testPrimary}) {

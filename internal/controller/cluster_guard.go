@@ -273,7 +273,7 @@ func (r *ClusterReconciler) checkFenceQuorumGuard(ctx context.Context, cluster *
 		if r.Recorder != nil {
 			r.Recorder.Event(cluster, corev1.EventTypeWarning, "FenceQuorumGuardBlocked", guard.Reason)
 		}
-		observed.Phase = phaseBlocked
+		observed.Phase = topology.PhaseBlocked
 		observed.PhaseReason = guard.Reason
 		observed.Ready = false
 		observed.Progressing = false

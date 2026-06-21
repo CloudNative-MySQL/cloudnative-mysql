@@ -23,12 +23,55 @@ import (
 	"time"
 
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	mysqlv1alpha1 "github.com/CloudNative-MySQL/cloudnative-mysql/api/v1alpha1"
 	mysqlconfig "github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/config"
 	"github.com/CloudNative-MySQL/cloudnative-mysql/pkg/management/mysql/webserver"
 )
+
+// Cluster status phases recorded on the Cluster CRD.
+const (
+	PhasePending        = "Pending"
+	PhaseProvisioning   = "Provisioning"
+	PhaseReady          = "Ready"
+	PhaseBlocked        = "Blocked"
+	PhaseSwitchover     = "Switchover"
+	PhaseDegraded       = "Degraded"
+	PhaseFailingOver    = "FailingOver"
+	PhaseUpgrading      = "Upgrading"
+	PhaseWaitingForUser = "WaitingForUser"
+)
+
+// TLS paths inside the instance container.
+const (
+	ClientCAPath  = "/etc/cloudnative-mysql/tls/client-ca"
+	ServerTLSPath = "/etc/cloudnative-mysql/tls/server"
+)
+
+// PatchClusterStatus fetches the latest Cluster, applies mutate and patches the
+// status sub-resource, then copies the result back into cluster.
+func PatchClusterStatus(
+	ctx context.Context,
+	c client.Client,
+	cluster *mysqlv1alpha1.Cluster,
+	mutate func(*mysqlv1alpha1.ClusterStatus),
+) error {
+	latest := &mysqlv1alpha1.Cluster{}
+	key := types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.Name}
+	if err := c.Get(ctx, key, latest); err != nil {
+		return err
+	}
+	before := latest.DeepCopy()
+	mutate(&latest.Status)
+	if err := c.Status().Patch(ctx, latest, client.MergeFrom(before)); err != nil {
+		return err
+	}
+	latest.Status.DeepCopyInto(&cluster.Status)
+	return nil
+}
 
 // InstanceIdentity describes one instance's topology-specific Kubernetes
 // identity. Common ServiceAccount and RoleBinding lifecycle stays in the

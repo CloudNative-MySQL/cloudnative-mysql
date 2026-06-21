@@ -28,8 +28,6 @@ import (
 	"github.com/CloudNative-MySQL/cloudnative-mysql/internal/controller/topology"
 )
 
-const phaseSwitchover = "Switchover"
-
 // ReconcileSwitchover validates and bounds a planned async primary change. The
 // in-Pod reconcilers perform the actual promotion and replication reconfiguration.
 func (r *Reconciler) ReconcileSwitchover(
@@ -46,7 +44,7 @@ func (r *Reconciler) ReconcileSwitchover(
 		return topology.FailoverResult{
 			Handled: true,
 			Phase: &topology.OperationPhase{
-				Phase:  phaseBlocked,
+				Phase:  topology.PhaseBlocked,
 				Reason: err.Error(),
 			},
 		}, nil
@@ -64,7 +62,7 @@ func (r *Reconciler) ReconcileSwitchover(
 	return topology.FailoverResult{
 		Handled: true,
 		Phase: &topology.OperationPhase{
-			Phase:       phaseSwitchover,
+			Phase:       topology.PhaseSwitchover,
 			Reason:      fmt.Sprintf("Switching over to %s", target),
 			Progressing: true,
 		},
@@ -98,7 +96,7 @@ func (r *Reconciler) ensureSwitchoverStarted(
 		}
 	}
 	now := time.Now().Truncate(time.Second)
-	if err := r.updateStatus(ctx, cluster, func(status *mysqlv1alpha1.ClusterStatus) {
+	if err := topology.PatchClusterStatus(ctx, r.client, cluster, func(status *mysqlv1alpha1.ClusterStatus) {
 		status.TargetPrimaryTimestamp = now.Format(time.RFC3339)
 	}); err != nil {
 		return time.Time{}, err
@@ -114,16 +112,16 @@ func (r *Reconciler) abortSwitchover(
 	reason := fmt.Sprintf("switchover to %s aborted: not promoted within maxSwitchoverDelay (%ds)",
 		target, cluster.Spec.MaxSwitchoverDelay)
 	logf.FromContext(ctx).Info("Aborting switchover", "target", target, "restoredPrimary", current, "reason", reason)
-	if err := r.updateStatus(ctx, cluster, func(status *mysqlv1alpha1.ClusterStatus) {
+	if err := topology.PatchClusterStatus(ctx, r.client, cluster, func(status *mysqlv1alpha1.ClusterStatus) {
 		status.TargetPrimary = current
 		status.TargetPrimaryTimestamp = ""
-		status.Phase = phaseBlocked
+		status.Phase = topology.PhaseBlocked
 		status.PhaseReason = reason
 	}); err != nil {
 		return topology.FailoverResult{}, err
 	}
 	if r.recorder != nil {
-		r.recorder.Event(cluster, corev1.EventTypeWarning, phaseBlocked, reason)
+		r.recorder.Event(cluster, corev1.EventTypeWarning, topology.PhaseBlocked, reason)
 	}
 	return topology.FailoverResult{Handled: true}, nil
 }
