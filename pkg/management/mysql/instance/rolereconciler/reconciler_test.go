@@ -296,6 +296,21 @@ func TestClusterCacheOptionsSelectsSingleClusterByName(t *testing.T) {
 	}
 }
 
+func TestClusterCacheOptionsSkipsLeaseUnderGroupReplication(t *testing.T) {
+	t.Parallel()
+	// Under GR the instance SA holds no Lease RBAC, so the cache must not watch
+	// Leases — otherwise its list/watch fails with a forbidden error.
+	opts := clusterCacheOptions(StartOptions{Namespace: "default", ClusterName: "demo", GroupReplication: true})
+	if len(opts.ByObject) != 1 {
+		t.Fatalf("ByObject entries = %d, want 1", len(opts.ByObject))
+	}
+	for obj := range opts.ByObject {
+		if _, ok := obj.(*coordinationv1.Lease); ok {
+			t.Fatal("GR cache must not watch Leases")
+		}
+	}
+}
+
 func TestTargetPrimaryAlreadyPrimarySetsCurrentPrimary(t *testing.T) {
 	t.Parallel()
 	local := &fakeLocal{status: &webserver.Status{Role: webserver.RolePrimary, SuperReadOnly: true}}

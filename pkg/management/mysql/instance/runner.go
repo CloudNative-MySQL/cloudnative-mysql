@@ -521,6 +521,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 				InstanceName:       opts.InstanceName,
 				SourceTemplate:     opts.SourceTemplate,
 				Local:              controller,
+				GroupReplication:   opts.GroupReplication,
 				OnAPIServerContact: isolationDetector.RecordContact,
 			})
 		}()
