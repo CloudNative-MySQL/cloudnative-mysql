@@ -65,6 +65,7 @@ func NewRootCommand() *cobra.Command {
 		newReloadCommand(),
 		newUserCommand(),
 		newDatabaseCommand(),
+		newDatabaseUserCommand(),
 		newMetricsCommand(),
 		newLogsCommand(),
 		newBackupCommand(),
