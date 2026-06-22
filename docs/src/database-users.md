@@ -177,6 +177,11 @@ Two important caveats:
   to include the system-schema carve-out. Scoping privileges to specific
   databases (`on: "mydb.*"`) avoids the `mysql` schema entirely and needs no
   `partial_revokes`.
+- **To let the admin create users, add `CREATE USER` to the grants.** It is not
+  in the default dbaas recipe (the recipe stays conservative), but `CREATE USER`
+  is not on the denylist either — the revokes keep the grant tables read-only, so
+  new accounts get created without exposing the operator's control plane. Add it
+  when you need tenants to self-manage their own accounts.
 
 As a second layer, cnmsql rejects a `DatabaseUser` that asks for a named
 cluster-control privilege (the same idea as the dangerous-config-key denylist).
