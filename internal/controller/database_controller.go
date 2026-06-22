@@ -189,7 +189,7 @@ func (r *DatabaseReconciler) reconcileDatabaseUser(
 	db *mysqlv1alpha1.Database,
 	cluster *mysqlv1alpha1.Cluster,
 	primary, dbName string,
-	du *mysqlv1alpha1.DatabaseUser,
+	du *mysqlv1alpha1.InlineUser,
 	observed map[string]user.UserInfo,
 	prevRV string,
 ) (string, error) {
@@ -283,7 +283,7 @@ func (r *DatabaseReconciler) removeFinalizer(ctx context.Context, db *mysqlv1alp
 func (r *DatabaseReconciler) resolveUserPassword(
 	ctx context.Context,
 	namespace string,
-	du *mysqlv1alpha1.DatabaseUser,
+	du *mysqlv1alpha1.InlineUser,
 ) (string, string, error) {
 	if du.PasswordSecret == nil {
 		return "", "", fmt.Errorf("user %s has no passwordSecret", du.Name)
