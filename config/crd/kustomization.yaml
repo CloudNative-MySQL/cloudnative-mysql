@@ -6,6 +6,7 @@ resources:
 - bases/mysql.cnmsql.co_backups.yaml
 - bases/mysql.cnmsql.co_scheduledbackups.yaml
 - bases/mysql.cnmsql.co_databases.yaml
+- bases/mysql.cnmsql.co_databaseusers.yaml
 - bases/mysql.cnmsql.co_imagecatalogs.yaml
 - bases/mysql.cnmsql.co_clusterimagecatalogs.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
