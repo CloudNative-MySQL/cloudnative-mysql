@@ -41,6 +41,9 @@ import (
 // before the DatabaseUser object is removed.
 const databaseUserFinalizer = "mysql.cnmsql.co/databaseuser"
 
+// grantTargetAll is the default grant target (all schemas, all tables).
+const grantTargetAll = "*.*"
+
 // DatabaseUserReconciler reconciles a DatabaseUser object: a standalone,
 // installation-wide MySQL account managed against the referenced cluster's
 // primary. It owns one account (name@host) and its grants, honouring the
@@ -158,8 +161,10 @@ func (r *DatabaseUserReconciler) applyUser(
 		return "", nil
 	}
 
-	// The account exists but our status has never recorded creating it: refuse to
-	// clobber an account owned by something else unless adoption is requested.
+	// owned is true once we have successfully applied this account at least once
+	// (markUserApplied is the only writer of Applied). If the account exists but
+	// we have never applied it, it belongs to something else: refuse to clobber
+	// it unless adoption is explicitly requested.
 	owned := du.Status.Applied != nil
 	if exists && !owned && !du.AdoptRequested() {
 		return "", userConflictError{msg: fmt.Sprintf(
@@ -313,7 +318,7 @@ func duPrivileges(grants []mysqlv1alpha1.DatabaseUserGrant) []user.Privilege {
 	for _, g := range grants {
 		on := g.On
 		if on == "" {
-			on = "*.*"
+			on = grantTargetAll
 		}
 		out = append(out, user.Privilege{Privileges: g.Privileges, On: on})
 	}
@@ -330,12 +335,12 @@ func duGrantsSatisfied(observed []string, du *mysqlv1alpha1.DatabaseUser) bool {
 		}
 	}
 	if du.Spec.Superuser {
-		return have["all privileges@*.*"]
+		return have["all privileges@"+grantTargetAll]
 	}
 	for _, g := range du.Spec.Grants {
 		on := g.On
 		if on == "" {
-			on = "*.*"
+			on = grantTargetAll
 		}
 		target := normalizeGrantTarget(on)
 		for _, priv := range g.Privileges {
@@ -364,10 +369,13 @@ func (r *DatabaseUserReconciler) markUserApplied(ctx context.Context, du *mysqlv
 	})
 }
 
+// markUserNotApplied records a failure on the Ready condition and Message but
+// deliberately leaves status.Applied untouched. Applied is set non-nil only on a
+// successful apply (markUserApplied); keeping it nil until then preserves the
+// "never applied by us" signal that drives conflict detection, so a pre-existing
+// account is never silently adopted just because an earlier reconcile failed.
 func (r *DatabaseUserReconciler) markUserNotApplied(ctx context.Context, du *mysqlv1alpha1.DatabaseUser, reason, message string) error {
 	return r.patchUserStatus(ctx, du, func(status *mysqlv1alpha1.DatabaseUserStatus) {
-		applied := false
-		status.Applied = &applied
 		status.Message = message
 		status.ObservedGeneration = du.Generation
 		setUserCondition(status, mysqlv1alpha1.ConditionReady, metav1.ConditionFalse, reason, message, du.Generation)

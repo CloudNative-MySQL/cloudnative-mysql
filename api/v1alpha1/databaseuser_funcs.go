@@ -22,26 +22,33 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
+const (
+	// tlsNone is the RequireTLS value meaning "no TLS requirement".
+	tlsNone = "none"
+	// grantTargetAll is the default grant target (all schemas, all tables).
+	grantTargetAll = "*.*"
+)
+
 // deniedDynamicPrivileges are the cluster-control privileges a DatabaseUser must
 // never be granted: they would let a tenant break replication, fencing, server
 // configuration, or the operator's own accounts. This is the grant-level
 // equivalent of the spec.mysql.parameters denylist and is the real safety net
 // behind the "safe DBaaS superuser" recipe (ALL without WITH GRANT OPTION).
 var deniedDynamicPrivileges = map[string]bool{
-	"replication_slave_admin":     true,
-	"replication_applier":         true,
-	"group_replication_admin":     true,
-	"group_replication_stream":    true,
-	"system_variables_admin":      true,
-	"connection_admin":            true,
-	"service_connection_admin":    true,
-	"persist_ro_variables_admin":  true,
-	"binlog_admin":                true,
-	"binlog_encryption_admin":     true,
-	"clone_admin":                 true,
-	"super":                       true,
-	"shutdown":                    true,
-	"file":                        true,
+	"replication_slave_admin":              true,
+	"replication_applier":                  true,
+	"group_replication_admin":              true,
+	"group_replication_stream":             true,
+	"system_variables_admin":               true,
+	"connection_admin":                     true,
+	"service_connection_admin":             true,
+	"persist_ro_variables_admin":           true,
+	"binlog_admin":                         true,
+	"binlog_encryption_admin":              true,
+	"clone_admin":                          true,
+	"super":                                true,
+	"shutdown":                             true,
+	"file":                                 true,
 	"group_replication_flow_control_admin": true,
 }
 
@@ -69,14 +76,14 @@ func (u *DatabaseUser) SetDefaults() {
 		u.Spec.Ensure = EnsurePresent
 	}
 	if u.Spec.RequireTLS == "" {
-		u.Spec.RequireTLS = "none"
+		u.Spec.RequireTLS = tlsNone
 	}
 	if u.Spec.ReclaimPolicy == "" {
 		u.Spec.ReclaimPolicy = "retain"
 	}
 	for i := range u.Spec.Grants {
 		if u.Spec.Grants[i].On == "" {
-			u.Spec.Grants[i].On = "*.*"
+			u.Spec.Grants[i].On = grantTargetAll
 		}
 	}
 }
@@ -103,7 +110,7 @@ func (u *DatabaseUser) Validate() field.ErrorList {
 			"grants cannot be set when superuser is true"))
 	}
 	switch u.Spec.RequireTLS {
-	case "", "none", "ssl", "x509":
+	case "", tlsNone, "ssl", "x509":
 	default:
 		allErrs = append(allErrs, field.Invalid(spec.Child("requireTLS"), u.Spec.RequireTLS,
 			"requireTLS must be one of none, ssl, x509"))
