@@ -4540,7 +4540,10 @@ spec:
               users:
                 description: Users is the list of users managed for this database.
                 items:
-                  description: DatabaseUser describes a MySQL user managed declaratively.
+                  description: |-
+                    InlineUser describes a MySQL user managed declaratively as part of a Database.
+                    For an installation-wide user not scoped to a single database, use the
+                    standalone DatabaseUser CRD instead.
                   properties:
                     ensure:
                       default: present
@@ -5411,6 +5414,7 @@ rules:
   - backups/status
   - clusters/status
   - databases/status
+  - databaseusers/status
   - scheduledbackups/status
   verbs:
   - get
@@ -5430,6 +5434,7 @@ rules:
   resources:
   - clusters
   - databases
+  - databaseusers
   - scheduledbackups
   verbs:
   - get
@@ -5442,6 +5447,7 @@ rules:
   resources:
   - clusters/finalizers
   - databases/finalizers
+  - databaseusers/finalizers
   verbs:
   - update
 - apiGroups:
