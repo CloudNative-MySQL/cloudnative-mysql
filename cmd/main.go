@@ -195,6 +195,14 @@ func main() {
 				setupLog.Error(err, "Failed to create controller", "controller", "database")
 				return err
 			}
+			if err := (&controller.DatabaseUserReconciler{
+				Client:   mgr.GetClient(),
+				Scheme:   mgr.GetScheme(),
+				Recorder: mgr.GetEventRecorderFor("databaseuser-controller"), //nolint:staticcheck
+			}).SetupWithManager(mgr); err != nil {
+				setupLog.Error(err, "Failed to create controller", "controller", "databaseuser")
+				return err
+			}
 			if os.Getenv("ENABLE_WEBHOOKS") != "false" {
 				if err := webhookv1alpha1.SetupClusterWebhookWithManager(mgr); err != nil {
 					setupLog.Error(err, "Failed to set up webhook", "webhook", "cluster-status")
