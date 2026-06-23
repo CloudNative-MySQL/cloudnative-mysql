@@ -57,7 +57,7 @@ type DatabaseSpec struct {
 
 	// Users is the list of users managed for this database.
 	// +optional
-	Users []DatabaseUser `json:"users,omitempty"`
+	Users []InlineUser `json:"users,omitempty"`
 
 	// ReclaimPolicy controls what happens to the MySQL database when the
 	// Database object is deleted.
@@ -67,8 +67,10 @@ type DatabaseSpec struct {
 	ReclaimPolicy string `json:"reclaimPolicy,omitempty"`
 }
 
-// DatabaseUser describes a MySQL user managed declaratively.
-type DatabaseUser struct {
+// InlineUser describes a MySQL user managed declaratively as part of a Database.
+// For an installation-wide user not scoped to a single database, use the
+// standalone DatabaseUser CRD instead.
+type InlineUser struct {
 	// Name of the user.
 	// +kubebuilder:validation:Required
 	Name string `json:"name"`

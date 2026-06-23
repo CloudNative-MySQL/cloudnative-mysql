@@ -138,7 +138,7 @@ func TestDatabaseReconcileCreatesUserWithGrants(t *testing.T) {
 		Data:       map[string][]byte{"password": []byte("s3cret")},
 	}
 	db := newDatabase(func(d *mysqlv1alpha1.Database) {
-		d.Spec.Users = []mysqlv1alpha1.DatabaseUser{{
+		d.Spec.Users = []mysqlv1alpha1.InlineUser{{
 			Name:           appName,
 			Host:           "%",
 			Ensure:         mysqlv1alpha1.EnsurePresent,
@@ -179,7 +179,7 @@ func TestDatabaseReconcileNoUserChangeWhenMatching(t *testing.T) {
 		Data:       map[string][]byte{"password": []byte("s3cret")},
 	}
 	db := newDatabase(func(d *mysqlv1alpha1.Database) {
-		d.Spec.Users = []mysqlv1alpha1.DatabaseUser{{
+		d.Spec.Users = []mysqlv1alpha1.InlineUser{{
 			Name:           appName,
 			Host:           "%",
 			Ensure:         mysqlv1alpha1.EnsurePresent,

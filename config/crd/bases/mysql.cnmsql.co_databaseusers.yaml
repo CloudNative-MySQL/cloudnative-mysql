@@ -4,16 +4,16 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.1
-  name: databases.mysql.cnmsql.co
+  name: databaseusers.mysql.cnmsql.co
 spec:
   group: mysql.cnmsql.co
   names:
-    kind: Database
-    listKind: DatabaseList
-    plural: databases
+    kind: DatabaseUser
+    listKind: DatabaseUserList
+    plural: databaseusers
     shortNames:
-    - mydatabase
-    singular: database
+    - myuser
+    singular: databaseuser
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
@@ -21,7 +21,7 @@ spec:
       name: Cluster
       type: string
     - jsonPath: .spec.name
-      name: Database
+      name: User
       type: string
     - jsonPath: .status.applied
       name: Applied
@@ -32,7 +32,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: Database is the Schema for the databases API.
+        description: DatabaseUser is the Schema for the databaseusers API.
         properties:
           apiVersion:
             description: |-
@@ -52,13 +52,10 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of Database
+            description: spec defines the desired state of DatabaseUser
             properties:
-              characterSet:
-                description: CharacterSet of the database (e.g. "utf8mb4").
-                type: string
               cluster:
-                description: Cluster references the MySQL cluster this database belongs
+                description: Cluster references the MySQL cluster this user belongs
                   to.
                 properties:
                   name:
@@ -67,103 +64,149 @@ spec:
                 required:
                 - name
                 type: object
-              collation:
-                description: Collation of the database (e.g. "utf8mb4_0900_ai_ci").
+              comment:
+                description: Comment is an optional user comment.
                 type: string
               ensure:
                 default: present
-                description: Ensure controls whether the database is created or dropped.
+                description: Ensure controls whether the user is created or dropped.
                 enum:
                 - present
                 - absent
                 type: string
-              name:
+              grants:
                 description: |-
-                  Name is the name of the MySQL database (schema). Defaults to the resource
-                  name if empty.
+                  Grants is the list of grants applied to the user. Targets are
+                  installation-wide and have no default schema (unlike Database.spec.users).
+                items:
+                  description: DatabaseUserGrant describes a single MySQL GRANT statement.
+                  properties:
+                    "on":
+                      default: '*.*'
+                      description: |-
+                        On is the target of the grant (e.g. "*.*", "mydb.*", "mydb.mytable").
+                        Defaults to "*.*".
+                      type: string
+                    privileges:
+                      description: Privileges is the list of privileges (e.g. "SELECT",
+                        "INSERT", "ALL").
+                      items:
+                        type: string
+                      minItems: 1
+                      type: array
+                  required:
+                  - privileges
+                  type: object
+                type: array
+              host:
+                default: '%'
+                description: Host the user connects from. Defaults to "%".
                 type: string
+              maxConnectionsPerHour:
+                description: MaxConnectionsPerHour resource limit. 0 = no limit.
+                format: int32
+                minimum: 0
+                type: integer
+              maxQueriesPerHour:
+                description: MaxQueriesPerHour resource limit. 0 = no limit.
+                format: int32
+                minimum: 0
+                type: integer
+              maxUpdatesPerHour:
+                description: MaxUpdatesPerHour resource limit. 0 = no limit.
+                format: int32
+                minimum: 0
+                type: integer
+              maxUserConnections:
+                description: MaxUserConnections resource limit. 0 = no limit.
+                format: int32
+                minimum: 0
+                type: integer
+              name:
+                description: Name is the MySQL user name. Defaults to the resource
+                  name if empty.
+                maxLength: 32
+                type: string
+              passwordSecret:
+                description: |-
+                  PasswordSecret references the secret key holding the user's password.
+                  Required when Ensure=present.
+                properties:
+                  key:
+                    description: Key within the Secret to select
+                    type: string
+                  name:
+                    description: Name of the Secret
+                    type: string
+                required:
+                - key
+                - name
+                type: object
               reclaimPolicy:
                 default: retain
                 description: |-
-                  ReclaimPolicy controls what happens to the MySQL database when the
-                  Database object is deleted.
+                  ReclaimPolicy controls what happens to the MySQL user when the
+                  DatabaseUser object is deleted.
                 enum:
                 - delete
                 - retain
                 type: string
-              users:
-                description: Users is the list of users managed for this database.
+              requireTLS:
+                default: none
+                description: RequireTLS sets REQUIRE X509, REQUIRE SSL, or none.
+                enum:
+                - x509
+                - ssl
+                - none
+                type: string
+              revokes:
+                description: |-
+                  Revokes lists privileges to revoke after Grants are applied, each scoped to
+                  an explicit target (typically a system schema such as "mysql.*"). Combined
+                  with partial_revokes=ON on the cluster, this carves the system schemas out
+                  of a broad "*.*" grant so a cross-database admin cannot modify the grant
+                  tables and self-escalate. Revokes are applied after Grants, in order.
                 items:
                   description: |-
-                    InlineUser describes a MySQL user managed declaratively as part of a Database.
-                    For an installation-wide user not scoped to a single database, use the
-                    standalone DatabaseUser CRD instead.
+                    DatabaseUserRevoke describes a single MySQL REVOKE statement, applied after
+                    the grants. The target is required: a revoke must name the schema (or schema
+                    object) it carves out, so it cannot accidentally strip a global grant.
                   properties:
-                    ensure:
-                      default: present
-                      description: Ensure controls whether the user is created or
-                        dropped.
-                      enum:
-                      - present
-                      - absent
+                    "on":
+                      description: On is the target to revoke from (e.g. "mysql.*",
+                        "sys.*").
                       type: string
-                    grants:
-                      description: Grants is the list of grants applied to the user.
+                    privileges:
+                      description: Privileges is the list of privileges to revoke
+                        (e.g. "INSERT", "UPDATE").
                       items:
-                        description: DatabaseGrant describes a single MySQL GRANT
-                          statement.
-                        properties:
-                          "on":
-                            description: |-
-                              On is the target of the grant (e.g. "mydb.*"). Defaults to the managed
-                              database.
-                            type: string
-                          privileges:
-                            description: Privileges is the list of privileges (e.g.
-                              "SELECT", "INSERT", "ALL").
-                            items:
-                              type: string
-                            type: array
-                        required:
-                        - privileges
-                        type: object
+                        type: string
+                      minItems: 1
                       type: array
-                    host:
-                      default: '%'
-                      description: Host the user connects from. Defaults to "%".
-                      type: string
-                    name:
-                      description: Name of the user.
-                      type: string
-                    passwordSecret:
-                      description: PasswordSecret references the secret key holding
-                        the user's password.
-                      properties:
-                        key:
-                          description: Key within the Secret to select
-                          type: string
-                        name:
-                          description: Name of the Secret
-                          type: string
-                      required:
-                      - key
-                      - name
-                      type: object
                   required:
-                  - name
+                  - "on"
+                  - privileges
                   type: object
                 type: array
+              superuser:
+                default: false
+                description: |-
+                  Superuser grants ALL PRIVILEGES on *.* WITH GRANT OPTION. It is unsafe for
+                  multi-tenant use and is mutually exclusive with Grants. For a constrained
+                  "DBaaS admin", use a Grants entry with ALL on *.* instead, which omits
+                  WITH GRANT OPTION.
+                type: boolean
             required:
             - cluster
             type: object
           status:
-            description: status defines the observed state of Database
+            description: status defines the observed state of DatabaseUser
             properties:
               applied:
                 description: Applied is true once the desired state has been reconciled.
                 type: boolean
               conditions:
-                description: Conditions represent the latest observations of the database
+                description: Conditions represent the latest observations of the user
                   state.
                 items:
                   description: Condition contains details for one aspect of the current
@@ -231,14 +274,11 @@ spec:
                   controller.
                 format: int64
                 type: integer
-              passwordStatus:
-                additionalProperties:
-                  type: string
+              passwordSecretResourceVersion:
                 description: |-
-                  PasswordStatus records, per managed user ("name@host"), the source Secret
-                  resourceVersion last applied to MySQL. It lets the controller re-apply a
-                  password only when its Secret changes.
-                type: object
+                  PasswordSecretResourceVersion records the source Secret resourceVersion
+                  last applied to MySQL, so the password is re-applied only when it changes.
+                type: string
             type: object
         required:
         - spec
