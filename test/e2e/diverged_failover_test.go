@@ -121,11 +121,16 @@ var _ = Describe("Diverged replica failover guard", Ordered, func() {
 			), "phase reason must mention divergence")
 		}, e2eTimeout(30*time.Second), 5*time.Second).Should(Succeed())
 
-		By("verifying the original primary recovers and resumes as primary")
-		Eventually(func(g Gomega) {
-			p := clusterPrimary(cluster)
-			g.Expect(p).To(Equal(primary), "original primary must resume after failover is blocked")
-		}, e2eTimeout(5*time.Minute), 5*time.Second).Should(Succeed())
+		By("verifying status still names the original primary (failover stayed blocked)")
+		// currentPrimary never changed because failover was correctly blocked, so
+		// this asserts the operator did not elect the diverged replica. It does NOT
+		// prove the Pod is back, so wait on Pod readiness separately below before
+		// exec'ing into it.
+		Expect(clusterPrimary(cluster)).To(Equal(primary),
+			"currentPrimary must still be the original primary after failover is blocked")
+
+		By(fmt.Sprintf("waiting for the force-deleted primary Pod %s to be recreated and Ready", primary))
+		waitForPodReady(primary, 5*time.Minute)
 
 		By(fmt.Sprintf("verifying the recovered primary still has post-divergence data"))
 		_, err = mysqlExec(primary, "app", password, "app",
