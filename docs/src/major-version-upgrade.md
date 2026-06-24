@@ -62,15 +62,29 @@ upgrade targets.
        series: "8.4"   # was "8.0"
    ```
 
-3. Apply. The operator rolls instances **one at a time, replicas first and the
-   primary last** (the primary via switchover where a healthy replica exists), so
-   only one instance is down at a time and a newer replica never replicates from
-   an older primary.
+3. Apply. The operator first takes a **pre-upgrade backup** (see below), then
+   rolls instances **one at a time, replicas first and the primary last** (the
+   primary via switchover where a healthy replica exists), so only one instance is
+   down at a time and a newer replica never replicates from an older primary. Each
+   instance must become Ready — which, with the default `--upgrade=AUTO`, means its
+   data-dictionary upgrade has finished — before the next one rolls.
 
-> **Take a backup first.** Until the operator's automatic pre-upgrade backup gate
-> ships, take a [physical backup](backup-recovery.md) yourself before starting a
-> major upgrade. The data-dictionary upgrade is irreversible; the backup is your
-> only rollback path.
+### Pre-upgrade backup gate
+
+Because the data-dictionary upgrade is irreversible, the operator takes a fresh
+backup before rolling any instance and waits for it to complete. This is
+controlled by `spec.upgrade.backupBeforeUpgrade` (default `true`):
+
+```yaml
+spec:
+  upgrade:
+    backupBeforeUpgrade: true   # default; set false to skip
+```
+
+If it is enabled but no `spec.backup.objectStore` is configured, the upgrade is
+**blocked** (status phase `Blocked`, event `BackupRequired`) rather than rolling
+unprotected — configure a backup destination or set `backupBeforeUpgrade: false`
+(e.g. when an external backup process is in place).
 
 ## Rollback
 
@@ -100,6 +114,11 @@ old series.
   variable from the spec. Common removals in 8.4 include
   `default_authentication_plugin`, `expire_logs_days`, and
   `master_info_repository`.
+- **The upgrade is blocked on a backup.** The cluster status phase is `Blocked`
+  with a `BackupRequired` event: `backupBeforeUpgrade` is enabled (the default)
+  but no `spec.backup.objectStore` is configured. Configure a destination, or set
+  `spec.upgrade.backupBeforeUpgrade: false`. While the pre-upgrade backup runs the
+  phase is `Upgrading` with a "Waiting for pre-upgrade backup" reason.
 - **The rollout stalls part-way.** The operator serializes the roll and waits for
   each instance to become Ready before the next. Inspect the cluster status phase
   and the per-instance logs to find the instance that is not becoming Ready.
