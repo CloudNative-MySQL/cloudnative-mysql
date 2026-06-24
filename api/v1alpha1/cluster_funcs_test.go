@@ -98,7 +98,7 @@ var _ = Describe("Cluster validation", func() {
 
 	It("rejects setting both imageName and imageCatalogRef", func() {
 		cluster := newValidCluster()
-		cluster.Spec.ImageCatalogRef = &ImageCatalogRef{Major: 8}
+		cluster.Spec.ImageCatalogRef = &ImageCatalogRef{Series: "8.0"}
 		Expect(cluster.Validate()).NotTo(BeEmpty())
 	})
 
@@ -448,7 +448,7 @@ var _ = Describe("Group Replication validation", func() {
 	It("rejects group replication on a pre-8.0 image catalog", func() {
 		cluster := newGRCluster()
 		cluster.Spec.ImageName = ""
-		cluster.Spec.ImageCatalogRef = &ImageCatalogRef{Major: 5}
+		cluster.Spec.ImageCatalogRef = &ImageCatalogRef{Series: "5.7"}
 		Expect(cluster.Validate()).NotTo(BeEmpty())
 	})
 

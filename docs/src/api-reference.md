@@ -320,7 +320,10 @@ _Appears in:_
 
 
 
-CatalogImage maps a MySQL major version to a container image.
+CatalogImage maps a MySQL series to a container image. The series, not the
+integer major, is the upgrade unit: MySQL 8.0 and 8.4 are distinct upgrade
+targets that both live under integer major 8, so a catalog keyed by integer
+major could not express the 8.0 -> 8.4 hop.
 
 
 
@@ -329,7 +332,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `major` _integer_ | Major is the MySQL major version (e.g. 8 for 8.0/8.4 lines uses the full<br />version where needed; values map to the image's server version). |  | Minimum: 5 <br />Required: \{\} <br /> |
+| `series` _string_ | Series is the MySQL release series in "major.minor" form (e.g. "8.0",<br />"8.4", "9.0"). It must match the image's server version line. |  | Pattern: `^[0-9]+\.[0-9]+$` <br />Required: \{\} <br /> |
 | `image` _string_ | Image is the fully qualified Percona Server for MySQL image reference. |  | Required: \{\} <br /> |
 
 
@@ -418,7 +421,7 @@ spec:
     apiGroup: mysql.cnmsql.co
     kind: ImageCatalog
     name: percona-images
-    major: 8
+    series: "8.4"
 ```
 
 ### MySQL configuration
@@ -642,9 +645,9 @@ metadata:
   name: global-percona-images
 spec:
   images:
-    - major: 8
+    - series: "8.4"
       image: ghcr.io/cnmsql/cnmsql-instance:8.4
-    - major: 9
+    - series: "9.0"
       image: ghcr.io/cnmsql/cnmsql-instance:9.x
 ```
 
@@ -740,7 +743,7 @@ _Appears in:_
 | `description` _string_ | Description of this MySQL cluster. |  | Optional: \{\} <br /> |
 | `inheritedMetadata` _[EmbeddedObjectMetadata](#embeddedobjectmetadata)_ | Metadata that will be inherited by all objects related to the Cluster. |  | Optional: \{\} <br /> |
 | `imageName` _string_ | ImageName is the name of the Percona Server for MySQL container image to<br />use. Mutually exclusive with ImageCatalogRef. |  | Optional: \{\} <br /> |
-| `imageCatalogRef` _[ImageCatalogRef](#imagecatalogref)_ | ImageCatalogRef resolves the image from an ImageCatalog or<br />ClusterImageCatalog based on the MySQL major version. Mutually exclusive<br />with ImageName. |  | Optional: \{\} <br /> |
+| `imageCatalogRef` _[ImageCatalogRef](#imagecatalogref)_ | ImageCatalogRef resolves the image from an ImageCatalog or<br />ClusterImageCatalog based on the MySQL series. Mutually exclusive<br />with ImageName. |  | Optional: \{\} <br /> |
 | `imagePullPolicy` _[PullPolicy](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.35/#pullpolicy-v1-core)_ | ImagePullPolicy is the policy used to pull the container image. |  | Enum: [Always Never IfNotPresent] <br />Optional: \{\} <br /> |
 | `imagePullSecrets` _[LocalObjectReference](#localobjectreference) array_ | ImagePullSecrets is the list of pull secrets used to pull the image. |  | Optional: \{\} <br /> |
 | `instances` _integer_ | Instances is the number of MySQL instances (one primary + replicas). | 1 | Minimum: 1 <br />Optional: \{\} <br /> |
@@ -1199,7 +1202,7 @@ _Appears in:_
 
 
 
-`ImageCatalog` is a namespaced mapping from MySQL major version to instance image. **Short name:** `myimagecatalog`
+`ImageCatalog` is a namespaced mapping from MySQL series to instance image. **Short name:** `myimagecatalog`
 
 **Example:**
 
@@ -1210,13 +1213,13 @@ metadata:
   name: percona-images
 spec:
   images:
-    - major: 8
+    - series: "8.4"
       image: ghcr.io/cnmsql/cnmsql-instance:8.4
-    - major: 9
+    - series: "9.0"
       image: ghcr.io/cnmsql/cnmsql-instance:9.x
 ```
 
-Each `major` value can appear at most once in the images list (minimum one, maximum eight).
+Each `series` value can appear at most once in the images list (minimum one, maximum eight).
 
 ImageCatalog is the Schema for the imagecatalogs API (namespaced).
 
@@ -1260,7 +1263,7 @@ ImageCatalogList contains a list of ImageCatalog.
 
 
 ImageCatalogRef references an ImageCatalog or ClusterImageCatalog entry to
-resolve a container image for a given major version.
+resolve a container image for a given MySQL series.
 
 
 
@@ -1272,7 +1275,7 @@ _Appears in:_
 | `apiGroup` _string_ | APIGroup is the group for the resource being referenced.<br />If APIGroup is not specified, the specified Kind must be in the core API group.<br />For any other third-party types, APIGroup is required. |  | Optional: \{\} <br /> |
 | `kind` _string_ | Kind is the type of resource being referenced |  |  |
 | `name` _string_ | Name is the name of resource being referenced |  |  |
-| `major` _integer_ | Major is the MySQL major version to resolve in the catalog. |  | Required: \{\} <br /> |
+| `series` _string_ | Series is the MySQL release series to resolve in the catalog, in<br />"major.minor" form (e.g. "8.0", "8.4", "9.0"). |  | Pattern: `^[0-9]+\.[0-9]+$` <br />Required: \{\} <br /> |
 
 
 #### ImageCatalogSpec
@@ -1289,7 +1292,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `images` _[CatalogImage](#catalogimage) array_ | Images is the list of major version to container image mappings. Each<br />major version must appear at most once. |  | MaxItems: 8 <br />MinItems: 1 <br /> |
+| `images` _[CatalogImage](#catalogimage) array_ | Images is the list of MySQL series to container image mappings. Each<br />series must appear at most once. |  | MaxItems: 8 <br />MinItems: 1 <br /> |
 
 
 #### InlineUser

@@ -72,7 +72,7 @@ Declare your desired state via Kubernetes custom resources. The operator continu
 | `Database` | Declarative schema management with owners and privilege scoping |
 | `Backup` | One-shot physical backup via XtraBackup to S3-compatible storage |
 | `ScheduledBackup` | Cron-scheduled backups with deterministic naming and retention |
-| `ImageCatalog` | Cluster-wide image resolution by MySQL major version |
+| `ImageCatalog` | Cluster-wide image resolution by MySQL series |
 | `ClusterImageCatalog` | Per-cluster image override catalog |
 
 All resources live under the `mysql.cnmsql.co/v1alpha1` API group. See the [API Reference](./api-reference.md) for every field.

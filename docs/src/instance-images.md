@@ -63,7 +63,9 @@ metadata:
   name: percona-images
 spec:
   images:
-    - major: 8
+    - series: "8.0"
+      image: ghcr.io/cnmsql/cnmsql-instance:8.0
+    - series: "8.4"
       image: ghcr.io/cnmsql/cnmsql-instance:8.4
 ---
 apiVersion: mysql.cnmsql.co/v1alpha1
@@ -75,7 +77,7 @@ spec:
     apiGroup: mysql.cnmsql.co
     kind: ImageCatalog
     name: percona-images
-    major: 8
+    series: "8.4"
 ```
 
 Use an explicit image or catalog in production. The development fallback image

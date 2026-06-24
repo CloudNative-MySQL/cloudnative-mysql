@@ -27,6 +27,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/ptr"
+
+	"github.com/cnmsql/cnmsql/pkg/management/mysql/version"
 )
 
 // retentionPolicyRe matches a retention-policy duration string: a positive
@@ -356,11 +358,13 @@ func (spec *ClusterSpec) validateReplication(path *field.Path) field.ErrorList {
 	// catalogs at admission. The authoritative version floor (8.0.22) is enforced
 	// by the instance manager before it starts the group, where the full server
 	// version is known.
-	if spec.ImageCatalogRef != nil && spec.ImageCatalogRef.Major < 8 {
-		allErrs = append(allErrs, field.Invalid(
-			path.Child("mode"), mode,
-			fmt.Sprintf("group replication requires MySQL 8.0+, but the image catalog targets major version %d",
-				spec.ImageCatalogRef.Major)))
+	if spec.ImageCatalogRef != nil {
+		if v, err := version.Parse(spec.ImageCatalogRef.Series); err == nil && v.Major < 8 {
+			allErrs = append(allErrs, field.Invalid(
+				path.Child("mode"), mode,
+				fmt.Sprintf("group replication requires MySQL 8.0+, but the image catalog targets series %s",
+					spec.ImageCatalogRef.Series)))
+		}
 	}
 
 	return allErrs

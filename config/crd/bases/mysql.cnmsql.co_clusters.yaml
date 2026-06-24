@@ -2042,17 +2042,19 @@ spec:
                   kind:
                     description: Kind is the type of resource being referenced
                     type: string
-                  major:
-                    description: Major is the MySQL major version to resolve in the
-                      catalog.
-                    type: integer
                   name:
                     description: Name is the name of resource being referenced
                     type: string
+                  series:
+                    description: |-
+                      Series is the MySQL release series to resolve in the catalog, in
+                      "major.minor" form (e.g. "8.0", "8.4", "9.0").
+                    pattern: ^[0-9]+\.[0-9]+$
+                    type: string
                 required:
                 - kind
-                - major
                 - name
+                - series
                 type: object
                 x-kubernetes-map-type: atomic
               imageName:

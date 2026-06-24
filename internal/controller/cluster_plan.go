@@ -452,7 +452,7 @@ func (r *ClusterReconciler) resolveImage(ctx context.Context, cluster *mysqlv1al
 			if err := r.Get(ctx, types.NamespacedName{Namespace: cluster.Namespace, Name: ref.Name}, catalog); err != nil {
 				return "", err
 			}
-			if image, ok := catalog.Spec.FindImageForMajor(ref.Major); ok {
+			if image, ok := catalog.Spec.FindImageForSeries(ref.Series); ok {
 				return image, nil
 			}
 		case "ClusterImageCatalog":
@@ -460,13 +460,13 @@ func (r *ClusterReconciler) resolveImage(ctx context.Context, cluster *mysqlv1al
 			if err := r.Get(ctx, types.NamespacedName{Name: ref.Name}, catalog); err != nil {
 				return "", err
 			}
-			if image, ok := catalog.Spec.FindImageForMajor(ref.Major); ok {
+			if image, ok := catalog.Spec.FindImageForSeries(ref.Series); ok {
 				return image, nil
 			}
 		default:
 			return "", fmt.Errorf("unsupported imageCatalogRef kind %q", ref.Kind)
 		}
-		return "", fmt.Errorf("no image for MySQL major %d in catalog %s", ref.Major, ref.Name)
+		return "", fmt.Errorf("no image for MySQL series %s in catalog %s", ref.Series, ref.Name)
 	}
 	return defaultInstanceImage, nil
 }

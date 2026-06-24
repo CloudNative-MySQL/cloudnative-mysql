@@ -95,7 +95,7 @@ type ClusterSpec struct {
 	ImageName string `json:"imageName,omitempty"`
 
 	// ImageCatalogRef resolves the image from an ImageCatalog or
-	// ClusterImageCatalog based on the MySQL major version. Mutually exclusive
+	// ClusterImageCatalog based on the MySQL series. Mutually exclusive
 	// with ImageName.
 	// +optional
 	ImageCatalogRef *ImageCatalogRef `json:"imageCatalogRef,omitempty"`
@@ -431,14 +431,16 @@ type GroupReplicationConfiguration struct {
 }
 
 // ImageCatalogRef references an ImageCatalog or ClusterImageCatalog entry to
-// resolve a container image for a given major version.
+// resolve a container image for a given MySQL series.
 type ImageCatalogRef struct {
 	// TypedLocalObjectReference points to the (Cluster)ImageCatalog.
 	corev1.TypedLocalObjectReference `json:",inline"`
 
-	// Major is the MySQL major version to resolve in the catalog.
+	// Series is the MySQL release series to resolve in the catalog, in
+	// "major.minor" form (e.g. "8.0", "8.4", "9.0").
+	// +kubebuilder:validation:Pattern=`^[0-9]+\.[0-9]+$`
 	// +kubebuilder:validation:Required
-	Major int `json:"major"`
+	Series string `json:"series"`
 }
 
 // BootstrapConfiguration describes how the cluster is initialised.

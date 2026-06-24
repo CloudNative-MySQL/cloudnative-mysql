@@ -300,14 +300,14 @@ func TestBuildPlanResolvesNamespacedImageCatalog(t *testing.T) {
 			Name: "images",
 			Kind: "ImageCatalog",
 		},
-		Major: 8,
+		Series: "8.0",
 	}
 	scheme := testScheme(t)
 	reconciler := &ClusterReconciler{
 		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(&mysqlv1alpha1.ImageCatalog{
 			ObjectMeta: metav1.ObjectMeta{Name: "images", Namespace: "default"},
 			Spec: mysqlv1alpha1.ImageCatalogSpec{Images: []mysqlv1alpha1.CatalogImage{
-				{Major: 8, Image: "registry.example/cnmsql:8.0"},
+				{Series: "8.0", Image: "registry.example/cnmsql:8.0"},
 			}},
 		}).Build(),
 		Scheme: scheme,
