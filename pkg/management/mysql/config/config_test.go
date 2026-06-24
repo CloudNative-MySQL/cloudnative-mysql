@@ -470,3 +470,43 @@ func TestGroupReplicationKeysAreManaged(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderDropsRemovedUserParameterOnNewSeries(t *testing.T) {
+	c := baseConfig()
+	c.Version = "8.4.3"
+	c.UserParameters = map[string]string{
+		"default_authentication_plugin": "mysql_native_password",
+		"max_connections":               "200",
+	}
+	out := mustRender(t, c)
+	// The variable removed in 8.4 must not be rendered (it would abort mysqld),
+	// while a still-valid user parameter survives.
+	assertNotContains(t, out, "default_authentication_plugin")
+	assertContains(t, out, "max_connections = 200")
+}
+
+func TestRenderKeepsRemovedUserParameterOnOlderSeries(t *testing.T) {
+	c := baseConfig()
+	c.Version = "8.0.36"
+	c.UserParameters = map[string]string{"default_authentication_plugin": "mysql_native_password"}
+	out := mustRender(t, c)
+	// On 8.0 the variable is still valid and must be preserved.
+	assertContains(t, out, "default_authentication_plugin = mysql_native_password")
+}
+
+func TestRemovedUserParametersWarns(t *testing.T) {
+	params := map[string]string{
+		"default_authentication_plugin": "mysql_native_password",
+		"max_connections":               "200",
+	}
+	if got := RemovedUserParameters("8.0.36", params); len(got) != 0 {
+		t.Errorf("expected no warnings on 8.0, got %v", got)
+	}
+	warnings := RemovedUserParameters("8.4.3", params)
+	if len(warnings) != 1 {
+		t.Fatalf("expected one warning on 8.4, got %v", warnings)
+	}
+	if !strings.Contains(warnings[0], "default_authentication_plugin") {
+		t.Errorf("warning does not mention the removed key: %q", warnings[0])
+	}
+}

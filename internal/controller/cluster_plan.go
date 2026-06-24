@@ -204,6 +204,19 @@ func (r *ClusterReconciler) warnDeprecatedParameters(cluster *mysqlv1alpha1.Clus
 	}
 }
 
+// warnRemovedParameters emits a Warning event for any user-supplied my.cnf
+// parameters the resolved server version no longer accepts and that the renderer
+// therefore drops, so a silently dropped setting across a major upgrade is
+// visible to the user.
+func (r *ClusterReconciler) warnRemovedParameters(cluster *mysqlv1alpha1.Cluster, serverVersion string) {
+	if r.Recorder == nil {
+		return
+	}
+	if warnings := mysqlconfig.RemovedUserParameters(serverVersion, cluster.Spec.MySQL.Parameters); len(warnings) > 0 {
+		r.Recorder.Event(cluster, corev1.EventTypeWarning, "RemovedParameter", strings.Join(warnings, "; "))
+	}
+}
+
 func (r *ClusterReconciler) buildPlan(ctx context.Context, cluster *mysqlv1alpha1.Cluster) (clusterPlan, error) {
 	image, err := r.resolveImage(ctx, cluster)
 	if err != nil {
@@ -213,6 +226,7 @@ func (r *ClusterReconciler) buildPlan(ctx context.Context, cluster *mysqlv1alpha
 	if err != nil {
 		return clusterPlan{}, err
 	}
+	r.warnRemovedParameters(cluster, serverVersion)
 
 	certs := cluster.Spec.Certificates
 	plan := clusterPlan{
