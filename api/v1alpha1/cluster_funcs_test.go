@@ -477,3 +477,62 @@ var _ = Describe("Group Replication validation", func() {
 		Expect(newCluster.ValidateUpdate(oldCluster)).NotTo(BeEmpty())
 	})
 })
+
+var _ = Describe("Series upgrade validation", func() {
+	catalogCluster := func(series string) *Cluster {
+		cluster := &Cluster{
+			Spec: ClusterSpec{
+				ImageCatalogRef: &ImageCatalogRef{Series: series},
+				Instances:       3,
+				Storage:         StorageConfiguration{Size: "10Gi"},
+			},
+		}
+		cluster.SetDefaults()
+		return cluster
+	}
+	imageCluster := func(image string) *Cluster {
+		cluster := &Cluster{
+			Spec: ClusterSpec{
+				ImageName: image,
+				Instances: 3,
+				Storage:   StorageConfiguration{Size: "10Gi"},
+			},
+		}
+		cluster.SetDefaults()
+		return cluster
+	}
+
+	It("allows a single supported hop via catalog", func() {
+		Expect(catalogCluster("8.4").ValidateUpdate(catalogCluster("8.0"))).To(BeEmpty())
+	})
+
+	It("rejects skipping a series via catalog", func() {
+		Expect(catalogCluster("9.0").ValidateUpdate(catalogCluster("8.0"))).NotTo(BeEmpty())
+	})
+
+	It("rejects a downgrade via catalog", func() {
+		Expect(catalogCluster("8.0").ValidateUpdate(catalogCluster("8.4"))).NotTo(BeEmpty())
+	})
+
+	It("allows an unchanged series via catalog", func() {
+		Expect(catalogCluster("8.0").ValidateUpdate(catalogCluster("8.0"))).To(BeEmpty())
+	})
+
+	It("rejects a series change expressed through imageName", func() {
+		old := imageCluster("percona/percona-server:8.0")
+		updated := imageCluster("percona/percona-server:8.4")
+		Expect(updated.ValidateUpdate(old)).NotTo(BeEmpty())
+	})
+
+	It("allows a patch bump within a series via imageName", func() {
+		old := imageCluster("percona/percona-server:8.0.36")
+		updated := imageCluster("percona/percona-server:8.0.40")
+		Expect(updated.ValidateUpdate(old)).To(BeEmpty())
+	})
+
+	It("does not guard when a series cannot be determined", func() {
+		old := imageCluster("percona/percona-server@sha256:deadbeef")
+		updated := imageCluster("percona/percona-server:8.4")
+		Expect(updated.ValidateUpdate(old)).To(BeEmpty())
+	})
+})
