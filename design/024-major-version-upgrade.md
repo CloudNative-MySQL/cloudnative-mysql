@@ -131,6 +131,16 @@ Extend `Cluster.ValidateUpdate` (`api/v1alpha1/cluster_funcs.go:209`):
 
 This is the cheap, brick-preventing layer and ships first.
 
+> **Phase 1 status:** the `ValidateUpdate` logic is implemented and unit-tested,
+> but — like the pre-existing `replication.mode` / `groupName` immutability checks
+> — it is **not yet wired to a runtime validating webhook** (the only cluster
+> webhook today is the status validator, `ClusterStatusValidator`). So in Phase 1
+> the actively-enforced guard at runtime is the **instance-manager hard refusal**
+> below; the admission layer is staged. Wiring the Cluster spec validating webhook
+> (so `Validate`/`ValidateUpdate` reject at apply time) and the admission-rejection
+> E2E are deferred to Phase 2, alongside the orchestrated-rollout E2E that needs a
+> multi-series image matrix.
+
 ### D. Config-renderer version gating
 
 Extend the version predicates in `pkg/management/mysql/version/version.go`
@@ -279,7 +289,9 @@ and `.github/e2e-matrix-generator.py`) must exercise every case above:
   only after all members are on the new version (Section G).
 - **Rejected transitions:** `8.0 → 9.x` (skip) and any downgrade are refused at
   admission, **and** the instance-manager guard refuses if admission is bypassed
-  (defense in depth).
+  (defense in depth). The admission-rejection half needs the spec validating
+  webhook wired (Phase 2); the instance-manager-refusal half is exercisable once
+  the multi-series image matrix exists.
 - **Backup gate:** upgrade with `backupBeforeUpgrade` default takes a backup
   first; with no object store configured it hard-fails with the expected
   condition; with `backupBeforeUpgrade: false` it proceeds without one.
