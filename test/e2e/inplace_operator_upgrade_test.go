@@ -48,6 +48,10 @@ var _ = Describe("In-place operator upgrade (streamed)", Ordered, Serial, func()
 
 	AfterAll(func() {
 		restoreE2EMarker()
+		By("restoring the baseline operator for subsequent specs")
+		cmd := exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
+		_, err := utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to restore the baseline operator after in-place upgrade test")
 	})
 
 	It("upgrades every instance in place without restarting mysqld or switching over", func() {
@@ -196,6 +200,10 @@ var _ = Describe("In-place operator upgrade defensive scenarios", Ordered, Seria
 
 	AfterAll(func() {
 		restoreE2EMarker()
+		By("restoring the baseline operator for subsequent specs")
+		cmd := exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
+		_, err := utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to restore the baseline operator after in-place upgrade defensive test")
 	})
 
 	It("re-execs multiple instances concurrently without losing quorum or data", func() {
