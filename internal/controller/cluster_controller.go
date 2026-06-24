@@ -350,6 +350,12 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if failoverHandled {
 		return failoverResult, nil
 	}
+	// Before rolling a MySQL major-version upgrade, hold until a pre-upgrade
+	// backup has completed (the data-dictionary upgrade is irreversible). No-op
+	// unless a major upgrade is pending and backupBeforeUpgrade is enabled.
+	if result, err, handled := r.reconcileUpgradeBackupGate(ctx, cluster, plan, observed); handled {
+		return result, err
+	}
 	provisioned, err := r.reconcileInstances(ctx, cluster, plan, observed)
 	if err != nil {
 		return ctrl.Result{}, err
