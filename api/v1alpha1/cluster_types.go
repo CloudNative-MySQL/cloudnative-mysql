@@ -209,6 +209,10 @@ type ClusterSpec struct {
 	// +optional
 	InPlaceInstanceManagerUpdates bool `json:"inPlaceInstanceManagerUpdates,omitempty"`
 
+	// Upgrade tunes MySQL server major-version upgrades.
+	// +optional
+	Upgrade *UpgradeConfiguration `json:"upgrade,omitempty"`
+
 	// MaxStartDelay is the time in seconds allowed for an instance to start.
 	// +kubebuilder:default:=3600
 	// +optional
@@ -441,6 +445,26 @@ type ImageCatalogRef struct {
 	// +kubebuilder:validation:Pattern=`^[0-9]+\.[0-9]+$`
 	// +kubebuilder:validation:Required
 	Series string `json:"series"`
+}
+
+// UpgradeConfiguration tunes MySQL server major-version upgrades.
+type UpgradeConfiguration struct {
+	// BackupBeforeUpgrade controls whether the operator takes a fresh backup
+	// before starting a major-version upgrade and waits for it to succeed before
+	// rolling any instance. Defaults to true. Set false to skip (e.g. when an
+	// external backup process is in place). The data-dictionary upgrade is
+	// irreversible, so the backup is the only rollback path.
+	// +optional
+	BackupBeforeUpgrade *bool `json:"backupBeforeUpgrade,omitempty"`
+}
+
+// BackupBeforeUpgradeEnabled reports the effective BackupBeforeUpgrade setting,
+// defaulting to true when unset.
+func (cluster *Cluster) BackupBeforeUpgradeEnabled() bool {
+	if cluster.Spec.Upgrade == nil || cluster.Spec.Upgrade.BackupBeforeUpgrade == nil {
+		return true
+	}
+	return *cluster.Spec.Upgrade.BackupBeforeUpgrade
 }
 
 // BootstrapConfiguration describes how the cluster is initialised.

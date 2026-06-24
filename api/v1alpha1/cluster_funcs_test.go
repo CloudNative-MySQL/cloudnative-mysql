@@ -536,3 +536,21 @@ var _ = Describe("Series upgrade validation", func() {
 		Expect(updated.ValidateUpdate(old)).To(BeEmpty())
 	})
 })
+
+var _ = Describe("BackupBeforeUpgrade defaulting", func() {
+	It("defaults to true when upgrade config is absent", func() {
+		Expect((&Cluster{}).BackupBeforeUpgradeEnabled()).To(BeTrue())
+	})
+
+	It("defaults to true when the flag is unset", func() {
+		cluster := &Cluster{Spec: ClusterSpec{Upgrade: &UpgradeConfiguration{}}}
+		Expect(cluster.BackupBeforeUpgradeEnabled()).To(BeTrue())
+	})
+
+	It("honours an explicit false", func() {
+		cluster := &Cluster{Spec: ClusterSpec{Upgrade: &UpgradeConfiguration{
+			BackupBeforeUpgrade: ptr.To(false),
+		}}}
+		Expect(cluster.BackupBeforeUpgradeEnabled()).To(BeFalse())
+	})
+})

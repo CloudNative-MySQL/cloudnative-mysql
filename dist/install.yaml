@@ -2457,7 +2457,7 @@ spec:
               imageCatalogRef:
                 description: |-
                   ImageCatalogRef resolves the image from an ImageCatalog or
-                  ClusterImageCatalog based on the MySQL major version. Mutually exclusive
+                  ClusterImageCatalog based on the MySQL series. Mutually exclusive
                   with ImageName.
                 properties:
                   apiGroup:
@@ -4038,6 +4038,18 @@ spec:
                   - whenUnsatisfiable
                   type: object
                 type: array
+              upgrade:
+                description: Upgrade tunes MySQL server major-version upgrades.
+                properties:
+                  backupBeforeUpgrade:
+                    description: |-
+                      BackupBeforeUpgrade controls whether the operator takes a fresh backup
+                      before starting a major-version upgrade and waits for it to succeed before
+                      rolling any instance. Defaults to true. Set false to skip (e.g. when an
+                      external backup process is in place). The data-dictionary upgrade is
+                      irreversible, so the backup is the only rollback path.
+                    type: boolean
+                type: object
             required:
             - storage
             type: object

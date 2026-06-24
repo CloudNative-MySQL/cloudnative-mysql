@@ -764,6 +764,7 @@ _Appears in:_
 | `primaryUpdateStrategy` _[PrimaryUpdateStrategy](#primaryupdatestrategy)_ | PrimaryUpdateStrategy controls whether the operator performs the primary<br />update automatically (unsupervised) or waits for the user (supervised). | unsupervised | Enum: [unsupervised supervised] <br />Optional: \{\} <br /> |
 | `primaryUpdateMethod` _[PrimaryUpdateMethod](#primaryupdatemethod)_ | PrimaryUpdateMethod controls how the primary is updated: by switchover<br />(promoting a replica first) or by in-place restart. | switchover | Enum: [switchover restart] <br />Optional: \{\} <br /> |
 | `inPlaceInstanceManagerUpdates` _boolean_ | InPlaceInstanceManagerUpdates, when true, rolls an operator upgrade out to<br />this cluster's instances by streaming the new instance-manager binary to each<br />Pod, which re-execs in place — no Pod restart and no switchover. When false<br />(the default) the operator instead deletes and recreates each Pod one at a<br />time (replicas first, primary last via switchover). |  | Optional: \{\} <br /> |
+| `upgrade` _[UpgradeConfiguration](#upgradeconfiguration)_ | Upgrade tunes MySQL server major-version upgrades. |  | Optional: \{\} <br /> |
 | `maxStartDelay` _integer_ | MaxStartDelay is the time in seconds allowed for an instance to start. | 3600 | Optional: \{\} <br /> |
 | `maxStopDelay` _integer_ | MaxStopDelay is the time in seconds allowed for an instance to gracefully<br />shut down. | 1800 | Optional: \{\} <br /> |
 | `smartShutdownTimeout` _integer_ | SmartShutdownTimeout is the time in seconds reserved for a "smart"<br />(graceful) shutdown attempt before falling back to a "fast" shutdown.<br />Must be lower than maxStopDelay; the remaining time is used for the<br />fast/immediate fallback. Defaults to 180. |  | Minimum: 0 <br />Optional: \{\} <br /> |
@@ -2015,6 +2016,22 @@ _Appears in:_
 | `size` _string_ | Size of the storage. Required if not already specified in the PVC template.<br />Changes to this field are automatically reapplied to the created PVCs.<br />Size cannot be decreased. |  | Optional: \{\} <br /> |
 | `resizeInUseVolumes` _boolean_ | Resize existing PVCs, defaults to true | true | Optional: \{\} <br /> |
 | `pvcTemplate` _[PersistentVolumeClaimSpec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.35/#persistentvolumeclaimspec-v1-core)_ | Template to be used to generate the Persistent Volume Claim |  | Optional: \{\} <br /> |
+
+
+#### UpgradeConfiguration
+
+
+
+UpgradeConfiguration tunes MySQL server major-version upgrades.
+
+
+
+_Appears in:_
+- [ClusterSpec](#clusterspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `backupBeforeUpgrade` _boolean_ | BackupBeforeUpgrade controls whether the operator takes a fresh backup<br />before starting a major-version upgrade and waits for it to succeed before<br />rolling any instance. Defaults to true. Set false to skip (e.g. when an<br />external backup process is in place). The data-dictionary upgrade is<br />irreversible, so the backup is the only rollback path. |  | Optional: \{\} <br /> |
 
 ## Shared Types
 
