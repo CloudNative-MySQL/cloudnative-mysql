@@ -299,9 +299,17 @@ and `.github/e2e-matrix-generator.py`) must exercise every case above:
   only after all members are on the new version (Section G).
 - **Rejected transitions:** `8.0 → 9.x` (skip) and any downgrade are refused at
   admission, **and** the instance-manager guard refuses if admission is bypassed
-  (defense in depth). The admission-rejection half needs the spec validating
-  webhook wired (Phase 2); the instance-manager-refusal half is exercisable once
-  the multi-series image matrix exists.
+  (defense in depth). **Done:** `test/e2e/major_upgrade_test.go` applies a
+  series-keyed catalog and asserts the webhook rejects skip, downgrade, and
+  both-image-sources at apply time, and allows the adjacent hop. The
+  instance-manager-refusal half is exercisable only once the multi-series image
+  matrix exists.
+
+The happy-path hops, GR finalization, backup-gate, config-gating, and
+rollback-via-restore cases all need two real MySQL image versions co-resident in
+the Kind node; the current e2e matrix pins one `serverVersion` per run
+(`.github/mysql_versions.json`). They remain a tracked gap pending a multi-series
+e2e harness, and are covered by unit/integration tests in the meantime.
 - **Backup gate:** upgrade with `backupBeforeUpgrade` default takes a backup
   first; with no object store configured it hard-fails with the expected
   condition; with `backupBeforeUpgrade: false` it proceeds without one.
