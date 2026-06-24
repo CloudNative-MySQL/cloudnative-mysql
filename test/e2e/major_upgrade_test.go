@@ -247,7 +247,7 @@ spec:
 	})
 })
 
-var _ = Describe("MySQL major-version upgrade rollout", Ordered, func() {
+var _ = Describe("MySQL major-version upgrade rollout", Ordered, Label("major-upgrade"), func() {
 	const (
 		cluster = "major-upgrade"
 		catalog = "major-upgrade-images"
@@ -315,7 +315,7 @@ var _ = Describe("MySQL major-version upgrade rollout", Ordered, func() {
 	})
 })
 
-var _ = Describe("MySQL major-version upgrade defensive scenarios", Ordered, func() {
+var _ = Describe("MySQL major-version upgrade defensive scenarios", Ordered, Label("major-upgrade"), func() {
 	const catalog = "major-upgrade-def-images"
 
 	var ns, prevNS string
@@ -405,7 +405,7 @@ var _ = Describe("MySQL major-version upgrade defensive scenarios", Ordered, fun
 	})
 })
 
-var _ = Describe("MySQL major-version upgrade single-instance", Ordered, func() {
+var _ = Describe("MySQL major-version upgrade single-instance", Ordered, Label("major-upgrade"), func() {
 	const (
 		cluster = "major-upgrade-solo"
 		catalog = "major-upgrade-solo-images"
@@ -498,7 +498,7 @@ spec:
 	})
 })
 
-var _ = Describe("MySQL major-version upgrade with backupBeforeUpgrade", Ordered, func() {
+var _ = Describe("MySQL major-version upgrade with backupBeforeUpgrade", Ordered, Label("major-upgrade"), func() {
 	const (
 		cluster = "major-upgrade-backup"
 		catalog = "major-upgrade-backup-images"
@@ -590,7 +590,7 @@ spec:
 	})
 })
 
-var _ = Describe("MySQL major-version upgrade blocked by missing backup store", Ordered, func() {
+var _ = Describe("MySQL major-version upgrade blocked by missing backup store", Ordered, Label("major-upgrade"), func() {
 	const (
 		cluster = "major-upgrade-noobj"
 		catalog = "major-upgrade-noobj-images"
@@ -695,7 +695,7 @@ spec:
 	})
 })
 
-var _ = Describe("MySQL major-version upgrade with removed parameters", Ordered, func() {
+var _ = Describe("MySQL major-version upgrade with removed parameters", Ordered, Label("major-upgrade"), func() {
 	const (
 		cluster = "major-upgrade-removed"
 		catalog = "major-upgrade-removed-images"
