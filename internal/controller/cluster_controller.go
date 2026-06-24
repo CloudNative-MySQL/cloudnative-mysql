@@ -370,12 +370,10 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if switched {
 		return ctrl.Result{RequeueAfter: provisioningRequeue}, nil
 	}
-	upgrading, upgradeResult, err := r.reconcileUpgrade(ctx, cluster, plan, observed)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	if upgrading {
-		return upgradeResult, nil
+	// Finish operator upgrades before finalizing the Group Replication
+	// communication protocol for a completed MySQL major-version upgrade.
+	if result, err, handled := r.reconcileUpgradeSteps(ctx, cluster, plan, observed); handled {
+		return result, err
 	}
 	// Keep rw/ro/r routing in step with the current primary (set by whichever
 	// instance promoted itself).

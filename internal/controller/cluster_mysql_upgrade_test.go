@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	mysqlv1alpha1 "github.com/cnmsql/cnmsql/api/v1alpha1"
+	"github.com/cnmsql/cnmsql/pkg/management/mysql/groupreplication"
 	"github.com/cnmsql/cnmsql/pkg/management/mysql/webserver"
 )
 
@@ -61,6 +62,104 @@ func TestMajorUpgradePending(t *testing.T) {
 	}
 	if _, pending := majorUpgradePending(plan, build("", "")); pending {
 		t.Error("did not expect pending when no version is reported")
+	}
+}
+
+func TestGroupCommunicationProtocolFinalization(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cluster := baseCluster()
+	cluster.Spec.Replication = &mysqlv1alpha1.ReplicationConfiguration{
+		Mode: mysqlv1alpha1.ReplicationModeGroupReplication,
+	}
+	control := &recordingControlClient{}
+	scheme := testScheme(t)
+	r := &ClusterReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).
+			WithStatusSubresource(&mysqlv1alpha1.Cluster{}).WithObjects(cluster).Build(),
+		Scheme: scheme, ControlClient: control,
+	}
+	plan := clusterPlan{ServerVersion: "8.4.3"}
+	primary, replica := cluster.Name+"-1", cluster.Name+"-2"
+	status := func(name, serverVersion, state, protocol string) *webserver.Status {
+		return &webserver.Status{
+			InstanceName: name,
+			Version:      serverVersion,
+			IsReady:      true,
+			GroupReplication: &webserver.GroupReplicationMemberStatus{
+				State: state, CommunicationProtocol: protocol,
+			},
+		}
+	}
+	observed := observedCluster{
+		InstanceNames: []string{primary, replica},
+		PrimaryName:   primary,
+		StatusByInstance: map[string]*webserver.Status{
+			primary: status(primary, "8.4.3", groupreplication.MemberStateOnline, "8.0.36"),
+			replica: status(replica, "8.4.3", groupreplication.MemberStateOnline, "8.0.36"),
+		},
+	}
+
+	_, err, handled := r.reconcileGroupCommunicationProtocol(ctx, cluster, plan, observed)
+	if err != nil {
+		t.Fatalf("finalize protocol: %v", err)
+	}
+	if !handled {
+		t.Fatal("expected lagging protocol to be finalized")
+	}
+	if len(control.setCommunicationProtocolInstances) != 1 ||
+		control.setCommunicationProtocolInstances[0] != primary ||
+		control.setCommunicationProtocolVersions[0] != plan.ServerVersion {
+		t.Fatalf("protocol calls = instances %v versions %v", control.setCommunicationProtocolInstances, control.setCommunicationProtocolVersions)
+	}
+}
+
+func TestGroupCommunicationProtocolFinalizationWaits(t *testing.T) {
+	t.Parallel()
+	cluster := baseCluster()
+	cluster.Spec.Replication = &mysqlv1alpha1.ReplicationConfiguration{
+		Mode: mysqlv1alpha1.ReplicationModeGroupReplication,
+	}
+	plan := clusterPlan{ServerVersion: "8.4.3"}
+	primary, replica := cluster.Name+"-1", cluster.Name+"-2"
+	tests := []struct {
+		name            string
+		replicaVersion  string
+		replicaState    string
+		primaryProtocol string
+	}{
+		{name: "member still upgrading", replicaVersion: "8.0.36", replicaState: groupreplication.MemberStateOnline, primaryProtocol: "8.0.36"},
+		{name: "member not online", replicaVersion: "8.4.3", replicaState: groupreplication.MemberStateRecovering, primaryProtocol: "8.0.36"},
+		{name: "protocol current", replicaVersion: "8.4.3", replicaState: groupreplication.MemberStateOnline, primaryProtocol: "8.4.0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			control := &recordingControlClient{}
+			r := &ClusterReconciler{ControlClient: control}
+			observed := observedCluster{
+				InstanceNames: []string{primary, replica}, PrimaryName: primary,
+				StatusByInstance: map[string]*webserver.Status{
+					primary: {
+						Version: "8.4.3",
+						GroupReplication: &webserver.GroupReplicationMemberStatus{
+							State: groupreplication.MemberStateOnline, CommunicationProtocol: tt.primaryProtocol,
+						},
+					},
+					replica: {
+						Version:          tt.replicaVersion,
+						GroupReplication: &webserver.GroupReplicationMemberStatus{State: tt.replicaState},
+					},
+				},
+			}
+			_, err, handled := r.reconcileGroupCommunicationProtocol(context.Background(), cluster, plan, observed)
+			if err != nil {
+				t.Fatalf("finalize protocol: %v", err)
+			}
+			if handled || len(control.setCommunicationProtocolInstances) != 0 {
+				t.Fatalf("unexpected protocol finalization: handled=%v calls=%v", handled, control.setCommunicationProtocolInstances)
+			}
+		})
 	}
 }
 

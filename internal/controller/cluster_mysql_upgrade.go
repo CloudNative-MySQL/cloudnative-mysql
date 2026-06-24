@@ -29,6 +29,7 @@ import (
 
 	mysqlv1alpha1 "github.com/cnmsql/cnmsql/api/v1alpha1"
 	"github.com/cnmsql/cnmsql/internal/controller/topology"
+	"github.com/cnmsql/cnmsql/pkg/management/mysql/groupreplication"
 	"github.com/cnmsql/cnmsql/pkg/management/mysql/version"
 )
 
@@ -58,6 +59,83 @@ func majorUpgradePending(plan clusterPlan, observed observedCluster) (version.Ve
 		}
 	}
 	return target, false
+}
+
+// reconcileUpgradeSteps keeps the main reconcile loop's upgrade branch narrow:
+// first finish any operator/instance-manager rollout, then finalize the GR
+// communication protocol after a completed MySQL major-version rollout.
+func (r *ClusterReconciler) reconcileUpgradeSteps(
+	ctx context.Context,
+	cluster *mysqlv1alpha1.Cluster,
+	plan clusterPlan,
+	observed observedCluster,
+) (ctrl.Result, error, bool) {
+	upgrading, result, err := r.reconcileUpgrade(ctx, cluster, plan, observed)
+	if err != nil || upgrading {
+		return result, err, true
+	}
+	return r.reconcileGroupCommunicationProtocol(ctx, cluster, plan, observed)
+}
+
+// reconcileGroupCommunicationProtocol completes a Group Replication major
+// upgrade by raising the group's pinned communication protocol. MySQL permits
+// this only after every member is on the target series and ONLINE. The primary's
+// observed protocol makes the action idempotent across reconciles.
+func (r *ClusterReconciler) reconcileGroupCommunicationProtocol(
+	ctx context.Context,
+	cluster *mysqlv1alpha1.Cluster,
+	plan clusterPlan,
+	observed observedCluster,
+) (ctrl.Result, error, bool) {
+	if !cluster.IsGroupReplication() || observed.PrimaryName == "" {
+		return ctrl.Result{}, nil, false
+	}
+
+	target, pending := majorUpgradePending(plan, observed)
+	if pending || !allGroupMembersUpgradedAndOnline(target, observed) {
+		return ctrl.Result{}, nil, false
+	}
+
+	primaryStatus := observed.StatusByInstance[observed.PrimaryName]
+	if primaryStatus == nil || primaryStatus.GroupReplication == nil {
+		return ctrl.Result{}, nil, false
+	}
+	current, err := version.Parse(primaryStatus.GroupReplication.CommunicationProtocol)
+	if err != nil || current.AtLeast(target.Major, target.Minor, 0) {
+		return ctrl.Result{}, nil, false
+	}
+
+	logf.FromContext(ctx).Info("Finalizing group communication protocol",
+		"primary", observed.PrimaryName,
+		"currentVersion", primaryStatus.GroupReplication.CommunicationProtocol,
+		"targetVersion", plan.ServerVersion)
+	if err := r.ControlClient.SetGroupCommunicationProtocol(
+		ctx, cluster, observed.PrimaryName, plan.ServerVersion,
+	); err != nil {
+		return ctrl.Result{}, fmt.Errorf("set group communication protocol: %w", err), true
+	}
+
+	reason := fmt.Sprintf("Finalizing Group Replication communication protocol at %s", plan.ServerVersion)
+	return ctrl.Result{RequeueAfter: provisioningRequeue}, r.patchStatus(ctx, cluster,
+		upgradeGateStatus(topology.PhaseUpgrading, reason, plan, observed)), true
+}
+
+func allGroupMembersUpgradedAndOnline(target version.Version, observed observedCluster) bool {
+	if len(observed.InstanceNames) == 0 {
+		return false
+	}
+	for _, name := range observed.InstanceNames {
+		status := observed.StatusByInstance[name]
+		if status == nil || status.GroupReplication == nil ||
+			status.GroupReplication.State != groupreplication.MemberStateOnline {
+			return false
+		}
+		running, err := version.Parse(status.Version)
+		if err != nil || !running.AtLeast(target.Major, target.Minor, 0) {
+			return false
+		}
+	}
+	return true
 }
 
 // preUpgradeBackupName is the deterministic name of the backup taken before a
