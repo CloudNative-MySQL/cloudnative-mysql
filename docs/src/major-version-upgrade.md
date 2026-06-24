@@ -93,7 +93,10 @@ communication protocol while members roll. Once every member reports the target
 series and is `ONLINE`, the operator automatically calls
 `group_replication_set_communication_protocol` on the primary with the full
 target version. The action is idempotent and the cluster briefly reports phase
-`Upgrading` while the protocol is finalized.
+`Upgrading` while the protocol is finalized. Cluster status records both the
+effective `communicationProtocol` and the requested
+`communicationProtocolTarget`. These can differ: MySQL 8.4 uses the effective
+protocol `8.0.27` even when finalized with an 8.4 server target.
 
 ## Rollback
 
@@ -135,5 +138,7 @@ old series.
   member is `ONLINE` and reports the target server series, then inspect the
   primary instance-manager log for `Finalizing group communication protocol` or
   a failed `/group/set-communication-protocol` action. From MySQL, compare
-  `group_replication_get_communication_protocol()` with the target version. The
-  operator retries on later reconciles once status is complete and healthy.
+  `group_replication_get_communication_protocol()` with
+  `status.groupReplication.communicationProtocol`, and check that
+  `communicationProtocolTarget` matches the upgraded server series. The operator
+  retries on later reconciles once status is complete and healthy.

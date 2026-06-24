@@ -204,8 +204,10 @@ upgrade. No equivalent exists today. Sequence with design
 > **Status:** Phase 3 is complete. The GR manager exposes the protocol get/set
 > UDFs, each instance reports the live protocol in `/status`, and the operator
 > uses a dedicated control endpoint to raise it on the primary only after every
-> expected member reports the target series and `ONLINE`. Comparing the primary's
-> observed protocol with the target makes reconciliation idempotent.
+> expected member reports the target series and `ONLINE`. Because MySQL reports
+> the effective minimum-compatible protocol (8.4 reports 8.0.27), not necessarily
+> the server version passed to the setter, the last successful server target is
+> persisted in Cluster status as the reconciliation idempotency marker.
 
 ## What we already have
 
@@ -232,10 +234,11 @@ The remaining tracked gaps are deliberately not hidden:
 
 1. The instance-manager refusal reason is logged but is not available through
    `/status`, because the manager exits before starting the control server.
-2. Multi-version E2E coverage for a real roll, GR finalization, the backup gate,
-   config gating, and rollback-via-restore still requires two server images in
-   one test run. The current matrix pins one server version; unit/integration
-   coverage remains the interim safety net.
+2. The dedicated multi-image E2E job now covers a real three-member GR roll
+   through `8.0 → 8.4 → 9.x`, including replica-first/primary-last ordering,
+   data survival, and protocol finalization. Single-instance upgrades, the
+   backup gate, config gating, rollback-via-restore, and bypassed-admission
+   instance refusal remain tracked E2E gaps.
 
 ## Phasing
 
@@ -304,21 +307,22 @@ and `.github/e2e-matrix-generator.py`) must exercise every case above:
 - **Happy-path hops:** `8.0 → 8.4` and `8.4 → 9.x`, single-instance and
   multi-instance, asserting replica-first/primary-last ordering, no data loss,
   and that each instance reports upgrade-complete before the next rolls.
+  **Multi-instance GR done:** a dedicated latest-Kubernetes matrix job co-loads
+  all three published images and rolls one persistent three-member cluster
+  through both hops, checking order, readiness, live versions, and data.
 - **Group Replication upgrade**, asserting the communication-protocol bump fires
-  only after all members are on the new version (Section G).
+  only after all members are on the new version (Section G). **Done** in the
+  multi-image upgrade job, including effective and requested-target status.
 - **Rejected transitions:** `8.0 → 9.x` (skip) and any downgrade are refused at
   admission, **and** the instance-manager guard refuses if admission is bypassed
   (defense in depth). **Done:** `test/e2e/major_upgrade_test.go` applies a
   series-keyed catalog and asserts the webhook rejects skip, downgrade, and
   both-image-sources at apply time, and allows the adjacent hop. The
-  instance-manager-refusal half is exercisable only once the multi-series image
-  matrix exists.
+  instance-manager-refusal half remains to be added to the multi-image job.
 
-The happy-path hops, GR finalization, backup-gate, config-gating, and
-rollback-via-restore cases all need two real MySQL image versions co-resident in
-the Kind node; the current e2e matrix pins one `serverVersion` per run
-(`.github/mysql_versions.json`). They remain a tracked gap pending a multi-series
-e2e harness, and are covered by unit/integration tests in the meantime.
+The dedicated upgrade matrix entry supplies the co-resident images needed for
+cross-series tests. The remaining cases below still need scenarios in that job
+and retain unit/integration coverage in the meantime.
 - **Backup gate:** upgrade with `backupBeforeUpgrade` default takes a backup
   first; with no object store configured it hard-fails with the expected
   condition; with `backupBeforeUpgrade: false` it proceeds without one.

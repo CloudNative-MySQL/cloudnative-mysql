@@ -826,6 +826,52 @@ _Appears in:_
 | `observedGeneration` _integer_ | ObservedGeneration is the generation observed by the controller. |  | Optional: \{\} <br /> |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.35/#condition-v1-meta) array_ | Conditions represent the latest available observations of the cluster's<br />state. |  | Optional: \{\} <br /> |
 | `managedRolesStatus` _[ManagedRolesStatus](#managedrolesstatus)_ | ManagedRolesStatus reports the reconciliation state of the declarative<br />managed roles. |  | Optional: \{\} <br /> |
+| `groupReplication` _[GroupReplicationStatus](#groupreplicationstatus)_ | GroupReplication reflects the live group membership, quorum, effective<br />communication protocol, and the last finalized protocol target. Nil for<br />async clusters. |  | Optional: \{\} <br /> |
+
+
+#### GroupReplicationStatus
+
+
+
+GroupReplicationStatus is the operator's cross-validated view of a Group
+Replication group.
+
+
+
+_Appears in:_
+- [ClusterStatus](#clusterstatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `groupName` _string_ | Pinned `group_replication_group_name`. |  | Optional: \{\} <br /> |
+| `bootstrapped` _boolean_ | Records that the group has been created at least once. |  | Optional: \{\} <br /> |
+| `primaryMember` _string_ | Pod name of the member elected PRIMARY. |  | Optional: \{\} <br /> |
+| `members` _[GroupMember](#groupmember) array_ | Cross-validated per-member group view. |  | Optional: \{\} <br /> |
+| `hasQuorum` _boolean_ | Whether a majority of configured members is ONLINE and reachable. |  |  |
+| `observedViewMax` _integer_ | Largest group view size observed, used for quorum calculations. |  | Optional: \{\} <br /> |
+| `observedOnlineMax` _integer_ | Largest number of ONLINE members observed. |  | Optional: \{\} <br /> |
+| `viewId` _string_ | Current Group Replication view identifier. |  | Optional: \{\} <br /> |
+| `communicationProtocol` _string_ | Effective minimum-compatible protocol reported by<br />`group_replication_get_communication_protocol()`. This can differ from the<br />server version passed to the setter; MySQL 8.4 reports 8.0.27. |  | Optional: \{\} <br /> |
+| `communicationProtocolTarget` _string_ | MySQL server version most recently passed successfully to<br />`group_replication_set_communication_protocol()`. Used as the idempotency<br />marker for post-upgrade finalization. |  | Optional: \{\} <br /> |
+
+
+#### GroupMember
+
+
+
+GroupMember is one member's state within the Group Replication group.
+
+
+
+_Appears in:_
+- [GroupReplicationStatus](#groupreplicationstatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `instance` _string_ | Pod name of the member. |  | Required: \{\} <br /> |
+| `state` _string_ | Group state: ONLINE, RECOVERING, OFFLINE, ERROR, or UNREACHABLE. |  | Required: \{\} <br /> |
+| `role` _string_ | Group role: PRIMARY or SECONDARY. |  | Required: \{\} <br /> |
+| `reachable` _boolean_ | Whether the group currently considers the member reachable. |  | Required: \{\} <br /> |
 
 
 #### ConfigMapKeySelector
@@ -2048,6 +2094,5 @@ CNMSQL - CloudNative for MySQL resources use Kubernetes `metav1.Condition` entri
 | `Ready` | Resource is fully functional. |
 | `Progressing` | Resource is being created, updated, backed up, restored, or changed. |
 | `Degraded` | Resource failed to reach or maintain the desired state. |
-
 
 
