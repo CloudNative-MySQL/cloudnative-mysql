@@ -100,3 +100,46 @@ kubectl get cluster cluster-sample -o jsonpath='{.status.resizingPVC}'
 For an online expansion a name appears only briefly. For an offline expansion a
 name lingers until the operator recycles the owning Pod and the new mount
 completes the resize. An empty list means no resize is in flight.
+
+## Monitoring storage usage
+
+Each instance reports the space used on its data volume, and the operator turns
+that into both a condition and an event so a volume filling up is visible before
+mysqld goes read-only.
+
+### The `StoragePressure` condition
+
+The operator raises a `StoragePressure` condition on the Cluster when any
+instance's data volume reaches **85% used**:
+
+```bash
+kubectl get cluster cluster-sample \
+  -o jsonpath='{.status.conditions[?(@.type=="StoragePressure")]}'
+```
+
+`status: "True"` (reason `AboveThreshold`) means at least one volume is at or
+above the threshold; the message names the affected instances. `status: "False"`
+(reason `BelowThreshold`) means every reported volume is below it. The condition
+only appears once at least one instance has reported its usage.
+
+The condition message lists instance names but not live percentages on purpose:
+usage changes on every write, so folding the figure into the condition would
+rewrite the Cluster status on every reconcile. The exact figure lives in the
+metrics below. On the threshold crossing the operator records a `StoragePressure`
+warning event, and a `StoragePressureResolved` event when usage drops back.
+
+### Metrics
+
+Every instance exposes its data-volume usage as Prometheus gauges on its metrics
+endpoint, independent of mysqld (they keep reporting even while the server is
+down):
+
+| Metric | Meaning |
+| --- | --- |
+| `mysql_instance_data_volume_used_bytes` | Bytes used on the data volume. |
+| `mysql_instance_data_volume_capacity_bytes` | Total size of the data volume. |
+| `mysql_instance_data_volume_available_bytes` | Bytes available to mysqld (excludes root-reserved blocks). |
+| `mysql_instance_data_volume_scrape_error` | `1` if the usage read failed, else `0`. |
+
+A usage ratio alert is `used_bytes / capacity_bytes`; pair it with
+[online expansion](#online-expansion-default) to grow a volume before it fills.
