@@ -76,16 +76,6 @@ var _ = Describe("Guards", Ordered, Label("feature"), func() {
 
 const fencingAnnotation = "cnmsql.cnmsql.co/fencing"
 
-// clusterPrimaryName returns the cluster's bootstrap primary Pod name without
-// requiring an elected primary (used while the cluster is terminating).
-func clusterPrimaryName(cluster string) string {
-	primary, err := clusterField(cluster, "{.status.currentPrimary}")
-	if err != nil || strings.TrimSpace(primary) == "" {
-		return cluster + "-1"
-	}
-	return strings.TrimSpace(primary)
-}
-
 // rServiceEndpoints returns the instance Pod names currently backing the r
 // (any-instance) routing Service.
 func rServiceEndpoints(g Gomega, cluster string) []string {
