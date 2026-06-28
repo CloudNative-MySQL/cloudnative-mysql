@@ -395,6 +395,24 @@ func clusterPrimary(name string) string {
 	return primary
 }
 
+// scaleInstances patches a Cluster's spec.instances to request a different
+// number of instances.
+func scaleInstances(name string, instances int) {
+	GinkgoHelper()
+	Eventually(func() error {
+		out, err := kubectl("patch", "cluster", name, "-n", testNamespace,
+			"--type=merge", "-p", fmt.Sprintf(`{"spec":{"instances":%d}}`, instances))
+		if err != nil && isTransientWebhookError(out, err) {
+			return err
+		}
+		if err != nil {
+			StopTrying("scale rejected").Wrap(err).Now()
+		}
+		return nil
+	}, e2eTimeout(2*time.Minute), 2*time.Second).Should(Succeed(),
+		"failed to scale cluster %s to %d instances", name, instances)
+}
+
 // appPassword returns the decoded application password for a Cluster, read from
 // the operator-generated `<cluster>-app` Secret.
 func appPassword(cluster string) string {
