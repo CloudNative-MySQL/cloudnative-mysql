@@ -236,6 +236,14 @@ var _ = Describe("Group Replication fencing and quorum guards", Ordered, Label("
 			g.Expect(err).NotTo(HaveOccurred(), "primary must be writable after quorum recovery")
 		}, e2eTimeout(5*time.Minute), 5*time.Second).Should(Succeed())
 
+		By("waiting for the cluster to exit the Blocked phase")
+		Eventually(func(g Gomega) {
+			phase, err := clusterField(cluster, "{.status.phase}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(phase).NotTo(Equal("Blocked"),
+				"cluster must exit the Blocked phase before asserting readiness")
+		}, e2eTimeout(4*time.Minute), 5*time.Second).Should(Succeed())
+
 		By("waiting for the cluster to scale back to full readiness")
 		// The deleted pods will be recreated by the reconciler.
 		expectClusterReady(cluster, instances, 20*time.Minute)
