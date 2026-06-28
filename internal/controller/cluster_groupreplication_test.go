@@ -364,6 +364,70 @@ func TestMergeGroupReplicationClampsObservedMaxOnScaleDown(t *testing.T) {
 	}
 }
 
+func TestMergeGroupReplicationDropsObservedMaxOnQuorumRecovery(t *testing.T) {
+	t.Parallel()
+	// A 3-member group lost quorum (only the primary survived) and the operator
+	// ran force_members so the survivor re-formed a quorate single-member group.
+	// The sticky ObservedViewMax (3, the pre-loss size) must drop to the re-formed
+	// view size so the recovered group reads as quorate; otherwise 1*2 > 3 is
+	// false and the cluster stays Blocked forever.
+	cluster := grCluster(&mysqlv1alpha1.GroupReplicationStatus{
+		GroupName:         "group-uuid",
+		Bootstrapped:      true,
+		ObservedViewMax:   3,
+		ObservedOnlineMax: 3,
+		HasQuorum:         false,
+	})
+	cluster.Spec.Instances = 3
+	controllergr.NewReconciler(nil, nil, nil, nil).MergeStatus(cluster, topology.Observation{
+		GroupReplication: &mysqlv1alpha1.GroupReplicationStatus{
+			PrimaryMember:     "demo-1",
+			Members:           []mysqlv1alpha1.GroupMember{{Instance: "demo-1", State: groupreplication.MemberStateOnline, Role: groupreplication.MemberRolePrimary}},
+			ObservedViewMax:   1,
+			ObservedOnlineMax: 1,
+			HasQuorum:         true,
+		},
+	})
+	gr := cluster.Status.GroupReplication
+	if gr.ObservedViewMax != 1 {
+		t.Fatalf("ObservedViewMax = %d, want dropped to 1 after quorum recovery", gr.ObservedViewMax)
+	}
+	if !gr.HasQuorum {
+		t.Fatal("a re-formed single-member group must read as quorate")
+	}
+}
+
+func TestMergeGroupReplicationKeepsStickyMaxDuringPartialFailure(t *testing.T) {
+	t.Parallel()
+	// A quorate 3-member group loses one member: the surviving 2-member view is
+	// still quorate, but because the group still HAS quorum the denominator must
+	// stay pinned at 3 (sticky) so a subsequent second failure is detected as
+	// quorum-lost. This guards the recovery-drop from shrinking on normal failures.
+	cluster := grCluster(&mysqlv1alpha1.GroupReplicationStatus{
+		GroupName:         "group-uuid",
+		Bootstrapped:      true,
+		ObservedViewMax:   3,
+		ObservedOnlineMax: 3,
+		HasQuorum:         true,
+	})
+	cluster.Spec.Instances = 3
+	online := func(i string) mysqlv1alpha1.GroupMember {
+		return mysqlv1alpha1.GroupMember{Instance: i, State: groupreplication.MemberStateOnline, Role: groupreplication.MemberRoleSecondary}
+	}
+	controllergr.NewReconciler(nil, nil, nil, nil).MergeStatus(cluster, topology.Observation{
+		GroupReplication: &mysqlv1alpha1.GroupReplicationStatus{
+			PrimaryMember:     "demo-1",
+			Members:           []mysqlv1alpha1.GroupMember{online("demo-1"), online("demo-2")},
+			ObservedViewMax:   2,
+			ObservedOnlineMax: 2,
+			HasQuorum:         true,
+		},
+	})
+	if gr := cluster.Status.GroupReplication; gr.ObservedViewMax != 3 {
+		t.Fatalf("ObservedViewMax = %d, want sticky 3 during a partial failure with quorum", gr.ObservedViewMax)
+	}
+}
+
 // Restore into a fresh GR group: the bootstrap primary restores the physical
 // backup into its data dir (then bootstraps a fresh single-member group via the
 // in-Pod role strategy), while secondaries initialise an empty GR server and

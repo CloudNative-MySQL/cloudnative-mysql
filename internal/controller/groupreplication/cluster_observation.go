@@ -144,8 +144,23 @@ func (r *Reconciler) MergeStatus(cluster *mysqlv1alpha1.Cluster, observed topolo
 		if status.CommunicationProtocolTarget != "" {
 			merged.CommunicationProtocolTarget = status.CommunicationProtocolTarget
 		}
-		merged.ObservedViewMax = max(merged.ObservedViewMax, status.ObservedViewMax)
-		merged.ObservedOnlineMax = max(merged.ObservedOnlineMax, status.ObservedOnlineMax)
+		// A quorate view observed while the persisted state had no quorum is the
+		// authoritative size of a re-formed group: a member below quorum cannot
+		// expel peers to shrink its own view, so the only way a smaller quorate
+		// view appears is an operator-driven force_members recovery. Trust it
+		// directly instead of max()-ing against the stale pre-loss size — otherwise
+		// the denominator stays pinned at the old size (e.g. 3) and a recovered
+		// single-member group reads as quorum-lost forever (1*2 > 3 is false),
+		// leaving the cluster Blocked. As re-provisioned members rejoin via
+		// distributed recovery the quorate view grows and max() takes it back up.
+		recovering := existing == nil || !existing.HasQuorum
+		if recovering && status.HasQuorum {
+			merged.ObservedViewMax = status.ObservedViewMax
+			merged.ObservedOnlineMax = status.ObservedOnlineMax
+		} else {
+			merged.ObservedViewMax = max(merged.ObservedViewMax, status.ObservedViewMax)
+			merged.ObservedOnlineMax = max(merged.ObservedOnlineMax, status.ObservedOnlineMax)
+		}
 		if status.PrimaryMember != "" {
 			merged.Bootstrapped = true
 			cluster.Status.CurrentPrimary = status.PrimaryMember
